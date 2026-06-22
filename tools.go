@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/openai/openai-go/v3"
+	ignore "github.com/sabhiram/go-gitignore"
 )
 
 var inReader io.Reader = os.Stdin
@@ -63,12 +64,44 @@ func handleBashTool(args map[string]any) string {
 	return stdout
 }
 
+func findGitIgnore(startPath string) (string, bool) {
+	absStart, err := filepath.Abs(startPath)
+	if err != nil {
+		return "", false
+	}
+
+	curr := absStart
+	for {
+		ignorePath := filepath.Join(curr, ".gitignore")
+		if _, err := os.Stat(ignorePath); err == nil {
+			return ignorePath, true
+		}
+
+		parent := filepath.Dir(curr)
+		if parent == curr {
+			break
+		}
+		curr = parent
+	}
+	return "", false
+}
+
 func handleListTool(args map[string]any) string {
 	directory := args["directory"].(string)
 	files, err := os.ReadDir(directory)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error listing directory: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Try to find and compile .gitignore
+	var gitignoreObj *ignore.GitIgnore
+	var gitignoreDir string
+	if gitignorePath, found := findGitIgnore(directory); found {
+		if obj, err := ignore.CompileIgnoreFile(gitignorePath); err == nil {
+			gitignoreObj = obj
+			gitignoreDir = filepath.Dir(gitignorePath)
+		}
 	}
 
 	type listEntry struct {
@@ -85,6 +118,18 @@ func handleListTool(args map[string]any) string {
 
 	entries := make([]listEntry, 0, len(files))
 	for _, file := range files {
+		filePath := filepath.Join(directory, file.Name())
+
+		// Check if the file is ignored by .gitignore
+		if gitignoreObj != nil {
+			relPath, err := filepath.Rel(gitignoreDir, filePath)
+			if err == nil {
+				if gitignoreObj.MatchesPath(relPath) {
+					continue
+				}
+			}
+		}
+
 		entryType := "file"
 		if file.IsDir() {
 			entryType = "folder"
@@ -95,7 +140,7 @@ func handleListTool(args map[string]any) string {
 
 		entry := listEntry{
 			Name:      file.Name(),
-			Path:      filepath.Join(directory, file.Name()),
+			Path:      filePath,
 			Type:      entryType,
 			IsHidden:  len(file.Name()) > 0 && file.Name()[0] == '.',
 			IsSymlink: file.Type()&os.ModeSymlink != 0,

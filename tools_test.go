@@ -197,3 +197,63 @@ func TestAskUserTool(t *testing.T) {
 		t.Errorf("expected 'no' after recovering from invalid inputs, got: '%s'", result3)
 	}
 }
+
+func TestListToolWithGitIgnore(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "talos_test_list_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	err = os.WriteFile(tempDir+"/allowed.txt", []byte("ok"), 0644)
+	if err != nil {
+		t.Fatalf("failed to write allowed file: %v", err)
+	}
+
+	err = os.WriteFile(tempDir+"/ignored.log", []byte("ignored"), 0644)
+	if err != nil {
+		t.Fatalf("failed to write ignored file: %v", err)
+	}
+
+	err = os.WriteFile(tempDir+"/.gitignore", []byte("ignored.log\n"), 0644)
+	if err != nil {
+		t.Fatalf("failed to write gitignore: %v", err)
+	}
+
+	args := map[string]any{
+		"directory": tempDir,
+	}
+
+	result := handleListTool(args)
+	if strings.HasPrefix(result, "error:") {
+		t.Fatalf("handleListTool returned error: %s", result)
+	}
+
+	var entries []struct {
+		Name string `json:"name"`
+	}
+	err = json.Unmarshal([]byte(result), &entries)
+	if err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v, raw: %s", err, result)
+	}
+
+	foundAllowed := false
+	foundIgnored := false
+
+	for _, entry := range entries {
+		if entry.Name == "allowed.txt" {
+			foundAllowed = true
+		}
+		if entry.Name == "ignored.log" {
+			foundIgnored = true
+		}
+	}
+
+	if !foundAllowed {
+		t.Errorf("expected allowed.txt to be listed")
+	}
+	if foundIgnored {
+		t.Errorf("expected ignored.log to be excluded by gitignore, but it was listed")
+	}
+}
+
