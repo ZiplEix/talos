@@ -1,4 +1,4 @@
-package main
+package storage
 
 import (
 	"encoding/json"
@@ -55,7 +55,13 @@ type Conversation struct {
 	Messages  []LocalMessage `json:"messages"`
 }
 
-func defaultSettings() Settings {
+type ConversationSummary struct {
+	ID        string `json:"id"`
+	CreatedAt string `json:"created_at"`
+	Messages  int    `json:"messages"`
+}
+
+func DefaultSettings() Settings {
 	providers := map[string]Provider{
 		"ollama": {
 			Name:    "ollama",
@@ -72,31 +78,30 @@ func defaultSettings() Settings {
 	}
 }
 
-
-func loadSettings() (Settings, error) {
+func LoadSettings() (Settings, error) {
 	dir := ".talos"
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return defaultSettings(), err
+		return DefaultSettings(), err
 	}
 
 	path := filepath.Join(dir, "settings.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		settings := defaultSettings()
-		_ = saveSettings(settings)
+		settings := DefaultSettings()
+		_ = SaveSettings(settings)
 		return settings, nil
 	}
 
 	var settings Settings
 	if err := json.Unmarshal(data, &settings); err != nil {
-		return defaultSettings(), err
+		return DefaultSettings(), err
 	}
 
 	var legacy LegacySettings
 	_ = json.Unmarshal(data, &legacy)
 
 	if len(settings.Providers) == 0 {
-		settings = defaultSettings()
+		settings = DefaultSettings()
 		if legacy.Model != "" {
 			settings.CurrentModel = legacy.Model
 		}
@@ -110,13 +115,13 @@ func loadSettings() (Settings, error) {
 			}
 			settings.Providers[settings.CurrentProvider] = prov
 		}
-		_ = saveSettings(settings)
+		_ = SaveSettings(settings)
 	}
 
 	return settings, nil
 }
 
-func saveSettings(settings Settings) error {
+func SaveSettings(settings Settings) error {
 	dir := ".talos"
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
@@ -130,14 +135,13 @@ func saveSettings(settings Settings) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-func toLocalMessages(messages []openai.ChatCompletionMessageParamUnion) []LocalMessage {
+func ToLocalMessages(messages []openai.ChatCompletionMessageParamUnion) []LocalMessage {
 	localMsgs := make([]LocalMessage, 0, len(messages))
 	for _, m := range messages {
 		jsonData, err := json.Marshal(m)
 		if err != nil {
 			continue
 		}
-
 		var localMsg LocalMessage
 		if err := json.Unmarshal(jsonData, &localMsg); err == nil {
 			localMsgs = append(localMsgs, localMsg)
@@ -146,7 +150,7 @@ func toLocalMessages(messages []openai.ChatCompletionMessageParamUnion) []LocalM
 	return localMsgs
 }
 
-func toOpenAIMessages(localMsgs []LocalMessage) []openai.ChatCompletionMessageParamUnion {
+func ToOpenAIMessages(localMsgs []LocalMessage) []openai.ChatCompletionMessageParamUnion {
 	oaMsgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(localMsgs))
 	for _, lm := range localMsgs {
 		switch lm.Role {
@@ -190,7 +194,7 @@ func toOpenAIMessages(localMsgs []LocalMessage) []openai.ChatCompletionMessagePa
 	return oaMsgs
 }
 
-func saveConversation(convID string, messages []openai.ChatCompletionMessageParamUnion) error {
+func SaveConversation(convID string, messages []openai.ChatCompletionMessageParamUnion) error {
 	dir := filepath.Join(".talos", "conversations")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
@@ -199,7 +203,7 @@ func saveConversation(convID string, messages []openai.ChatCompletionMessagePara
 	conv := Conversation{
 		ID:        convID,
 		CreatedAt: time.Now().Format(time.RFC3339),
-		Messages:  toLocalMessages(messages),
+		Messages:  ToLocalMessages(messages),
 	}
 
 	path := filepath.Join(dir, fmt.Sprintf("%s.json", convID))
@@ -211,14 +215,7 @@ func saveConversation(convID string, messages []openai.ChatCompletionMessagePara
 	return os.WriteFile(path, data, 0644)
 }
 
-// ConversationSummary is a lightweight summary for listing conversations.
-type ConversationSummary struct {
-	ID        string `json:"id"`
-	CreatedAt string `json:"created_at"`
-	Messages  int    `json:"messages"`
-}
-
-func listConversations() ([]ConversationSummary, error) {
+func ListConversations() ([]ConversationSummary, error) {
 	dir := filepath.Join(".talos", "conversations")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
@@ -251,7 +248,6 @@ func listConversations() ([]ConversationSummary, error) {
 		})
 	}
 
-	// Sort by CreatedAt descending (most recent first)
 	sort.Slice(summaries, func(i, j int) bool {
 		return summaries[i].CreatedAt > summaries[j].CreatedAt
 	})
@@ -259,7 +255,7 @@ func listConversations() ([]ConversationSummary, error) {
 	return summaries, nil
 }
 
-func loadConversation(convID string) ([]openai.ChatCompletionMessageParamUnion, error) {
+func LoadConversation(convID string) ([]openai.ChatCompletionMessageParamUnion, error) {
 	dir := filepath.Join(".talos", "conversations")
 	path := filepath.Join(dir, fmt.Sprintf("%s.json", convID))
 
@@ -273,11 +269,11 @@ func loadConversation(convID string) ([]openai.ChatCompletionMessageParamUnion, 
 		return nil, fmt.Errorf("failed to parse conversation '%s': %w", convID, err)
 	}
 
-	return toOpenAIMessages(conv.Messages), nil
+	return ToOpenAIMessages(conv.Messages), nil
 }
 
-func getLatestConversation() (string, []openai.ChatCompletionMessageParamUnion, error) {
-	summaries, err := listConversations()
+func GetLatestConversation() (string, []openai.ChatCompletionMessageParamUnion, error) {
+	summaries, err := ListConversations()
 	if err != nil {
 		return "", nil, err
 	}
@@ -286,7 +282,7 @@ func getLatestConversation() (string, []openai.ChatCompletionMessageParamUnion, 
 	}
 
 	latestID := summaries[0].ID
-	messages, err := loadConversation(latestID)
+	messages, err := LoadConversation(latestID)
 	if err != nil {
 		return "", nil, err
 	}

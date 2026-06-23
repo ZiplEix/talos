@@ -1,13 +1,15 @@
-package main
+package tools
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -18,10 +20,9 @@ import (
 
 var inReader io.Reader = os.Stdin
 
-// AskUserHandler is set by the TUI to redirect interactive tool calls into the Bubble Tea event loop.
 var AskUserHandler func(question string, options []string) string
 
-type ToolCall func(args map[string]any) (result string)
+type ToolCall func(args map[string]any) string
 
 var toolCalls = map[string]ToolCall{
 	"Read":          handleReadTool,
@@ -36,12 +37,75 @@ var toolCalls = map[string]ToolCall{
 	"AskUser":       handleAskUserTool,
 }
 
+func exitError(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	os.Exit(1)
+}
+
+func executeShellCommand(command string) (stdout string, stderr string) {
+	cmd := exec.Command("sh", "-c", command)
+
+	var stdoutBuffer bytes.Buffer
+	var stderrBuffer bytes.Buffer
+	cmd.Stdout = &stdoutBuffer
+	cmd.Stderr = &stderrBuffer
+
+	err := cmd.Run()
+	stdout = stdoutBuffer.String()
+	stderr = stderrBuffer.String()
+
+	if err != nil && stderr == "" {
+		stderr = err.Error()
+	}
+
+	return stdout, stderr
+}
+
+func GetToolParamValue(name string, argumentsJSON string) string {
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
+		return ""
+	}
+
+	var primaryVal interface{}
+	switch name {
+	case "Read", "Write", "ReadRange", "ReplaceInFile":
+		primaryVal = args["file_path"]
+	case "Bash":
+		primaryVal = args["command"]
+	case "List":
+		primaryVal = args["directory"]
+	case "FetchWebPage":
+		primaryVal = args["url"]
+	case "GoogleSearch":
+		primaryVal = args["query"]
+	case "FileSearch":
+		primaryVal = args["pattern"]
+	case "AskUser":
+		primaryVal = args["question"]
+	}
+
+	if primaryVal != nil {
+		if str, ok := primaryVal.(string); ok {
+			return str
+		}
+		return fmt.Sprintf("%v", primaryVal)
+	}
+
+	if len(args) > 0 {
+		for _, v := range args {
+			return fmt.Sprintf("%v", v)
+		}
+	}
+
+	return ""
+}
+
 func handleReadTool(args map[string]any) string {
 	filePath := args["file_path"].(string)
 	content, err := os.ReadFile(filePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error reading file: %v\n", err)
-		os.Exit(1)
+		exitError("error reading file: %v", err)
 	}
 	return string(content)
 }
@@ -51,8 +115,7 @@ func handleWriteTool(args map[string]any) string {
 	content := args["content"].(string)
 	err := os.WriteFile(filePath, []byte(content), 0644)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error writing file: %v\n", err)
-		os.Exit(1)
+		exitError("error writing file: %v", err)
 	}
 	return content
 }
@@ -63,7 +126,6 @@ func handleBashTool(args map[string]any) string {
 	if stderr != "" {
 		return stderr
 	}
-
 	return stdout
 }
 
@@ -72,14 +134,12 @@ func findGitIgnore(startPath string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-
 	curr := absStart
 	for {
 		ignorePath := filepath.Join(curr, ".gitignore")
 		if _, err := os.Stat(ignorePath); err == nil {
 			return ignorePath, true
 		}
-
 		parent := filepath.Dir(curr)
 		if parent == curr {
 			break
@@ -93,11 +153,9 @@ func handleListTool(args map[string]any) string {
 	directory := args["directory"].(string)
 	files, err := os.ReadDir(directory)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error listing directory: %v\n", err)
-		os.Exit(1)
+		exitError("error listing directory: %v", err)
 	}
 
-	// Try to find and compile .gitignore
 	var gitignoreObj *ignore.GitIgnore
 	var gitignoreDir string
 	if gitignorePath, found := findGitIgnore(directory); found {
@@ -122,8 +180,6 @@ func handleListTool(args map[string]any) string {
 	entries := make([]listEntry, 0, len(files))
 	for _, file := range files {
 		filePath := filepath.Join(directory, file.Name())
-
-		// Check if the file is ignored by .gitignore
 		if gitignoreObj != nil {
 			relPath, err := filepath.Rel(gitignoreDir, filePath)
 			if err == nil {
@@ -132,7 +188,6 @@ func handleListTool(args map[string]any) string {
 				}
 			}
 		}
-
 		entryType := "file"
 		if file.IsDir() {
 			entryType = "folder"
@@ -140,7 +195,6 @@ func handleListTool(args map[string]any) string {
 		if file.Type()&os.ModeSymlink != 0 {
 			entryType = "symlink"
 		}
-
 		entry := listEntry{
 			Name:      file.Name(),
 			Path:      filePath,
@@ -149,14 +203,12 @@ func handleListTool(args map[string]any) string {
 			IsSymlink: file.Type()&os.ModeSymlink != 0,
 			Extension: filepath.Ext(file.Name()),
 		}
-
 		info, infoErr := file.Info()
 		if infoErr == nil {
 			entry.SizeBytes = info.Size()
 			entry.Mode = info.Mode().String()
 			entry.ModTime = info.ModTime().Format("2006-01-02T15:04:05Z07:00")
 		}
-
 		entries = append(entries, entry)
 	}
 
@@ -171,27 +223,21 @@ func handleWebSearchTool(args map[string]any) string {
 		return fmt.Sprintf("error fetching page: %v", err)
 	}
 	defer resp.Body.Close()
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Sprintf("error reading body: %v", err)
 	}
-
 	return string(body)
 }
 
-func handleToolCall(toolCall openai.ChatCompletionMessageToolCallUnion) (result string, toolCallID string) {
+func HandleToolCall(toolCall openai.ChatCompletionMessageToolCallUnion) (result string, toolCallID string) {
 	var args map[string]any
 	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
-		fmt.Fprintf(os.Stderr, "error parsing tool arguments: %v\n", err)
-		os.Exit(1)
+		exitError("error parsing tool arguments: %v", err)
 	}
-
 	if _, ok := toolCalls[toolCall.Function.Name]; !ok {
-		fmt.Fprintf(os.Stderr, "error: unknown tool call %s\n", toolCall.Function.Name)
-		os.Exit(1)
+		exitError("error: unknown tool call %s", toolCall.Function.Name)
 	}
-
 	result = toolCalls[toolCall.Function.Name](args)
 	toolCallID = toolCall.ID
 	return result, toolCallID
@@ -208,7 +254,6 @@ func handleGoogleSearchTool(args map[string]any) string {
 	if err != nil {
 		return fmt.Sprintf("error creating request: %v", err)
 	}
-
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
 
 	client := &http.Client{}
@@ -229,7 +274,6 @@ func handleGoogleSearchTool(args map[string]any) string {
 
 	html := string(body)
 
-	// Clean HTML tags helper
 	cleanHTML := func(input string) string {
 		re := regexp.MustCompile(`<[^>]*>`)
 		res := re.ReplaceAllString(input, "")
@@ -318,7 +362,6 @@ func handleFileSearchTool(args map[string]any) string {
 		if fi.Size() > 1024*1024 {
 			return nil
 		}
-
 		file, err := os.Open(path)
 		if err != nil {
 			return nil
@@ -366,7 +409,6 @@ func handleFileSearchTool(args map[string]any) string {
 			if len(matches) >= maxMatches {
 				return filepath.SkipDir
 			}
-
 			if d.IsDir() {
 				name := d.Name()
 				if name != "." && name != ".." && ((len(name) > 0 && name[0] == '.') || name == "node_modules" || name == "vendor") {
@@ -374,7 +416,6 @@ func handleFileSearchTool(args map[string]any) string {
 				}
 				return nil
 			}
-
 			return searchFile(path)
 		})
 		if err != nil {
@@ -543,5 +584,181 @@ func handleAskUserTool(args map[string]any) string {
 		}
 
 		fmt.Println("Invalid selection. Please try again.")
+	}
+}
+
+func GetRegisteredTools() []openai.ChatCompletionToolUnionParam {
+	return []openai.ChatCompletionToolUnionParam{
+		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+			Name:        "Read",
+			Description: openai.String("Read and return the content of a file"),
+			Parameters: openai.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"file_path": map[string]any{
+						"type":        "string",
+						"description": "The path to the file to read",
+					},
+				},
+				"required": []string{"file_path"},
+			},
+		}),
+		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+			Name:        "Write",
+			Description: openai.String("Write content to a file, create the file if it does not exist"),
+			Parameters: openai.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"file_path": map[string]any{
+						"type":        "string",
+						"description": "The path to the file to write",
+					},
+					"content": map[string]any{
+						"type":        "string",
+						"description": "The content to write to the file",
+					},
+				},
+				"required": []string{"file_path", "content"},
+			},
+		}),
+		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+			Name:        "Bash",
+			Description: openai.String("Execute a shell command"),
+			Parameters: openai.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"command": map[string]any{
+						"type":        "string",
+						"description": "The shell command to execute",
+					},
+				},
+				"required": []string{"command"},
+			},
+		}),
+		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+			Name:        "List",
+			Description: openai.String("List files in a directory"),
+			Parameters: openai.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"directory": map[string]any{
+						"type":        "string",
+						"description": "The directory path to list files from",
+					},
+				},
+				"required": []string{"directory"},
+			},
+		}),
+		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+			Name:        "FetchWebPage",
+			Description: openai.String("Fetch the content of a webpage"),
+			Parameters: openai.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"url": map[string]any{
+						"type":        "string",
+						"description": "The URL of the webpage to fetch",
+					},
+				},
+				"required": []string{"url"},
+			},
+		}),
+		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+			Name:        "GoogleSearch",
+			Description: openai.String("Search Google for a given query and return a list of search results (titles, URLs, snippets)"),
+			Parameters: openai.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"query": map[string]any{
+						"type":        "string",
+						"description": "The search query",
+					},
+				},
+				"required": []string{"query"},
+			},
+		}),
+		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+			Name:        "FileSearch",
+			Description: openai.String("Search for a pattern or keyword recursively within a directory or file"),
+			Parameters: openai.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"pattern": map[string]any{
+						"type":        "string",
+						"description": "The pattern or keyword to search for",
+					},
+					"directory": map[string]any{
+						"type":        "string",
+						"description": "The directory or file path to search inside",
+					},
+				},
+				"required": []string{"pattern", "directory"},
+			},
+		}),
+		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+			Name:        "ReadRange",
+			Description: openai.String("Read a specific line range from a file, avoiding loading the entire file"),
+			Parameters: openai.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"file_path": map[string]any{
+						"type":        "string",
+						"description": "The path to the file to read",
+					},
+					"start_line": map[string]any{
+						"type":        "integer",
+						"description": "The first line to read (1-indexed)",
+					},
+					"end_line": map[string]any{
+						"type":        "integer",
+						"description": "The last line to read (inclusive)",
+					},
+				},
+				"required": []string{"file_path", "start_line", "end_line"},
+			},
+		}),
+		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+			Name:        "ReplaceInFile",
+			Description: openai.String("Replace a specific block of text in a file with another block (uniquely identified)"),
+			Parameters: openai.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"file_path": map[string]any{
+						"type":        "string",
+						"description": "The path to the file to modify",
+					},
+					"old_content": map[string]any{
+						"type":        "string",
+						"description": "The exact content in the file to be replaced",
+					},
+					"new_content": map[string]any{
+						"type":        "string",
+						"description": "The new content to replace it with",
+					},
+				},
+				"required": []string{"file_path", "old_content", "new_content"},
+			},
+		}),
+		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+			Name:        "AskUser",
+			Description: openai.String("Ask the user a question with a list of options to choose from, blocking until they answer"),
+			Parameters: openai.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"question": map[string]any{
+						"type":        "string",
+						"description": "The question to ask the user",
+					},
+					"options": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "string",
+						},
+						"description": "The list of valid options the user can select",
+					},
+				},
+				"required": []string{"question", "options"},
+			},
+		}),
 	}
 }
