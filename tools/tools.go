@@ -30,6 +30,7 @@ var toolCalls = map[string]ToolCall{
 	"Mkdir":         handleMkdirTool,
 	"Bash":          handleBashTool,
 	"List":          handleListTool,
+	"Tree":          handleTreeTool,
 	"FetchWebPage":  handleWebSearchTool,
 	"GoogleSearch":  handleGoogleSearchTool,
 	"FileSearch":    handleFileSearchTool,
@@ -75,6 +76,8 @@ func GetToolParamValue(name string, argumentsJSON string) string {
 	case "Bash":
 		primaryVal = args["command"]
 	case "List":
+		primaryVal = args["directory"]
+	case "Tree":
 		primaryVal = args["directory"]
 	case "FetchWebPage":
 		primaryVal = args["url"]
@@ -226,6 +229,87 @@ func handleListTool(args map[string]any) string {
 
 	result, _ := json.Marshal(entries)
 	return string(result)
+}
+
+func handleTreeTool(args map[string]any) string {
+	directory, ok := args["directory"].(string)
+	if !ok {
+		return "error: directory parameter is missing or not a string"
+	}
+
+	var gitignoreObj *ignore.GitIgnore
+	var gitignoreDir string
+	if gitignorePath, found := findGitIgnore(directory); found {
+		if obj, err := ignore.CompileIgnoreFile(gitignorePath); err == nil {
+			gitignoreObj = obj
+			gitignoreDir = filepath.Dir(gitignorePath)
+		}
+	}
+
+	var buf strings.Builder
+	maxDepth := 5
+	if d, hasDepth := args["max_depth"]; hasDepth {
+		if f, ok := d.(float64); ok {
+			maxDepth = int(f)
+		}
+	}
+
+	walkTree(&buf, directory, 0, maxDepth, gitignoreObj, gitignoreDir, "")
+	return buf.String()
+}
+
+func walkTree(buf *strings.Builder, dir string, depth int, maxDepth int, gitignoreObj *ignore.GitIgnore, gitignoreDir string, prefix string) {
+	if depth > maxDepth {
+		return
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		fmt.Fprintf(buf, "%s[error: %v]\n", prefix, err)
+		return
+	}
+
+	// Filter and sort: dirs first, then files, each sorted alphabetically, skip hidden
+	var dirs []os.DirEntry
+	var files []os.DirEntry
+	for _, e := range entries {
+		name := e.Name()
+		if name != "." && name != ".." && len(name) > 0 && name[0] == '.' {
+			continue
+		}
+		if gitignoreObj != nil {
+			relPath, err := filepath.Rel(gitignoreDir, filepath.Join(dir, name))
+			if err == nil && gitignoreObj.MatchesPath(relPath) {
+				continue
+			}
+		}
+		if e.IsDir() {
+			dirs = append(dirs, e)
+		} else {
+			files = append(files, e)
+		}
+	}
+
+	all := append(dirs, files...)
+
+	for i, entry := range all {
+		isLast := i == len(all)-1
+		connector := "├── "
+		if isLast {
+			connector = "└── "
+		}
+		fmt.Fprintf(buf, "%s%s%s\n", prefix, connector, entry.Name())
+
+		if entry.IsDir() {
+			nextPrefix := prefix
+			if isLast {
+				nextPrefix += "    "
+			} else {
+				nextPrefix += "│   "
+			}
+			walkTree(buf, filepath.Join(dir, entry.Name()), depth+1, maxDepth, gitignoreObj, gitignoreDir, nextPrefix)
+		}
+	}
 }
 
 func handleWebSearchTool(args map[string]any) string {
@@ -670,6 +754,24 @@ func GetRegisteredTools() []openai.ChatCompletionToolUnionParam {
 					"directory": map[string]any{
 						"type":        "string",
 						"description": "The directory path to list files from",
+					},
+				},
+				"required": []string{"directory"},
+			},
+		}),
+		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+			Name:        "Tree",
+			Description: openai.String("Display a visual tree representation of a directory structure (respects .gitignore)"),
+			Parameters: openai.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"directory": map[string]any{
+						"type":        "string",
+						"description": "The directory path to display the tree for",
+					},
+					"max_depth": map[string]any{
+						"type":        "integer",
+						"description": "Maximum depth to traverse (default: 5)",
 					},
 				},
 				"required": []string{"directory"},
