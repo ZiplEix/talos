@@ -164,40 +164,6 @@ func TestReplaceInFileTool(t *testing.T) {
 	}
 }
 
-func TestAskUserTool(t *testing.T) {
-	// Backup original inReader
-	oldInReader := inReader
-	defer func() {
-		inReader = oldInReader
-	}()
-
-	// Case 1: user enters a numeric choice (e.g. 2 for "yes")
-	inReader = strings.NewReader("2\n")
-	args := map[string]any{
-		"question": "Do you like Go?",
-		"options":  []any{"no", "yes"},
-	}
-
-	result1 := handleAskUserTool(args)
-	if result1 != "yes" {
-		t.Errorf("expected 'yes' for numeric selection 2, got: '%s'", result1)
-	}
-
-	// Case 2: user enters a text choice directly (case-insensitive, e.g. "NO")
-	inReader = strings.NewReader("NO\n")
-	result2 := handleAskUserTool(args)
-	if result2 != "no" {
-		t.Errorf("expected 'no' for text selection 'NO', got: '%s'", result2)
-	}
-
-	// Case 3: invalid selection followed by a valid selection
-	inReader = strings.NewReader("invalid\n3\n1\n")
-	result3 := handleAskUserTool(args)
-	if result3 != "no" {
-		t.Errorf("expected 'no' after recovering from invalid inputs, got: '%s'", result3)
-	}
-}
-
 func TestListToolWithGitIgnore(t *testing.T) {
 	tempDir, err := os.MkdirTemp("", "talos_test_list_*")
 	if err != nil {

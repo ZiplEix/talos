@@ -18,10 +18,6 @@ import (
 	ignore "github.com/sabhiram/go-gitignore"
 )
 
-var inReader io.Reader = os.Stdin
-
-var AskUserHandler func(question string, options []string) string
-
 // ToolCall is the handler signature for a tool.
 type ToolCall func(args map[string]any) string
 
@@ -240,29 +236,7 @@ var registeredTools = []ToolDefinition{
 		Handler:          handleReplaceInFileTool,
 		PrimaryParamName: "file_path",
 	},
-	{
-		Name:        "AskUser",
-		Description: "Ask the user a question with a list of options to choose from, blocking until they answer",
-		Parameters: openai.FunctionParameters{
-			"type": "object",
-			"properties": map[string]any{
-				"question": map[string]any{
-					"type":        "string",
-					"description": "The question to ask the user",
-				},
-				"options": map[string]any{
-					"type": "array",
-					"items": map[string]any{
-						"type": "string",
-					},
-					"description": "The list of valid options the user can select",
-				},
-			},
-			"required": []string{"question", "options"},
-		},
-		Handler:          handleAskUserTool,
-		PrimaryParamName: "question",
-	},
+
 }
 
 // toolCalls is built automatically from registeredTools.
@@ -866,67 +840,4 @@ func handleReplaceInFileTool(args map[string]any) string {
 	}
 
 	return "success: content replaced successfully"
-}
-
-func handleAskUserTool(args map[string]any) string {
-	question, ok := args["question"].(string)
-	if !ok {
-		return "error: question parameter is missing or not a string"
-	}
-
-	optionsVal, ok := args["options"]
-	if !ok {
-		return "error: options parameter is missing"
-	}
-
-	var options []string
-	if list, ok := optionsVal.([]any); ok {
-		for _, item := range list {
-			if str, ok := item.(string); ok {
-				options = append(options, str)
-			}
-		}
-	} else if strList, ok := optionsVal.([]string); ok {
-		options = strList
-	}
-
-	if len(options) == 0 {
-		return "error: options parameter must be a non-empty array of strings"
-	}
-
-	if AskUserHandler != nil {
-		return AskUserHandler(question, options)
-	}
-
-	fmt.Println("\n=================== TALOS INTERACTIVE QUESTION ===================")
-	fmt.Println(question)
-	for i, opt := range options {
-		fmt.Printf("[%d] %s\n", i+1, opt)
-	}
-	fmt.Println("==================================================================")
-
-	reader := bufio.NewReader(inReader)
-	for {
-		fmt.Printf("Select an option (1-%d or type the option name): ", len(options))
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			return fmt.Sprintf("error reading user input: %v", err)
-		}
-		input = strings.TrimSpace(input)
-
-		var selectedIdx int
-		_, scanErr := fmt.Sscanf(input, "%d", &selectedIdx)
-		if scanErr == nil && selectedIdx >= 1 && selectedIdx <= len(options) {
-			return options[selectedIdx-1]
-		}
-
-		inputLower := strings.ToLower(input)
-		for _, opt := range options {
-			if strings.ToLower(opt) == inputLower {
-				return opt
-			}
-		}
-
-		fmt.Println("Invalid selection. Please try again.")
-	}
 }

@@ -77,7 +77,7 @@ type Model struct {
 	oaiMessages  []openai.ChatCompletionMessageParamUnion
 
 	client   openai.Client
-settings storage.Settings
+	settings storage.Settings
 	Program  *tea.Program
 	convID   string
 
@@ -171,18 +171,6 @@ Utilise ces outils de manière ciblée, intelligente et sécurisée pour répond
 	}
 
 	m.cancelCtx, m.cancelFunc = context.WithCancel(context.Background())
-
-	tools.AskUserHandler = func(question string, options []string) string {
-		ch := make(chan string)
-		if m.Program != nil {
-			m.Program.Send(askUserRequestMsg{
-				question: question,
-				options:  options,
-				resultCh: ch,
-			})
-		}
-		return <-ch
-	}
 
 	return m
 }
