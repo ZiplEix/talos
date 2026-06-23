@@ -27,6 +27,7 @@ type ToolCall func(args map[string]any) string
 var toolCalls = map[string]ToolCall{
 	"Read":          handleReadTool,
 	"Write":         handleWriteTool,
+	"Mkdir":         handleMkdirTool,
 	"Bash":          handleBashTool,
 	"List":          handleListTool,
 	"FetchWebPage":  handleWebSearchTool,
@@ -83,6 +84,8 @@ func GetToolParamValue(name string, argumentsJSON string) string {
 		primaryVal = args["pattern"]
 	case "AskUser":
 		primaryVal = args["question"]
+	case "Mkdir":
+		primaryVal = args["directory_path"]
 	}
 
 	if primaryVal != nil {
@@ -118,6 +121,15 @@ func handleWriteTool(args map[string]any) string {
 		exitError("error writing file: %v", err)
 	}
 	return content
+}
+
+func handleMkdirTool(args map[string]any) string {
+	dirPath := args["directory_path"].(string)
+	err := os.MkdirAll(dirPath, 0755)
+	if err != nil {
+		exitError("error creating directory: %v", err)
+	}
+	return dirPath
 }
 
 func handleBashTool(args map[string]any) string {
@@ -619,6 +631,20 @@ func GetRegisteredTools() []openai.ChatCompletionToolUnionParam {
 					},
 				},
 				"required": []string{"file_path", "content"},
+			},
+		}),
+		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
+			Name:        "Mkdir",
+			Description: openai.String("Create a directory (including parent directories if needed)"),
+			Parameters: openai.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"directory_path": map[string]any{
+						"type":        "string",
+						"description": "The path to the directory to create",
+					},
+				},
+				"required": []string{"directory_path"},
 			},
 		}),
 		openai.ChatCompletionFunctionTool(openai.FunctionDefinitionParam{
