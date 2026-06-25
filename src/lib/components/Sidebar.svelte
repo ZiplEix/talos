@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from '$app/stores';
-  import { Home, Bot, Settings, Plus, Trash2, PanelLeftClose, MessageSquare } from 'lucide-svelte';
+  import { Home, Bot, Settings, Plus, Trash2, PanelLeftClose, MessageSquare, Edit2 } from 'lucide-svelte';
 
   interface Chat {
     id: string;
@@ -12,13 +12,53 @@
     isSidebarOpen = $bindable(true),
     chats = [],
     onCreateChat,
-    onDeleteChat
+    onDeleteChat,
+    onRenameChat
   }: {
     isSidebarOpen: boolean;
     chats: Chat[];
     onCreateChat: () => void;
     onDeleteChat: (id: string, event: Event) => void;
+    onRenameChat: (id: string, title: string) => Promise<void>;
   } = $props();
+
+  let editingChatId = $state<string | null>(null);
+  let editingTitle = $state<string>('');
+
+  function startEditing(id: string, title: string, event: Event) {
+    event.stopPropagation();
+    event.preventDefault();
+    editingChatId = id;
+    editingTitle = title;
+  }
+
+  async function saveRename(id: string) {
+    if (!editingTitle.trim()) return cancelEditing();
+    const titleToSave = editingTitle.trim();
+    cancelEditing();
+    await onRenameChat(id, titleToSave);
+  }
+
+  function cancelEditing() {
+    editingChatId = null;
+    editingTitle = '';
+  }
+
+  function handleRenameKeydown(event: KeyboardEvent, id: string) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveRename(id);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelEditing();
+    }
+  }
+
+  // Svelte Action to focus and select text on mount
+  function focusOnMount(node: HTMLInputElement) {
+    node.focus();
+    node.select();
+  }
 </script>
 
 <aside
@@ -85,26 +125,54 @@
         <div class="text-xs text-slate-600 italic px-4 py-2">Aucune discussion</div>
       {:else}
         {#each chats as chat (chat.id)}
-          <a
-            href="/chat/{chat.id}"
-            class="group flex items-center justify-between px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200 relative {
-              $page.params.id === chat.id
-                ? 'bg-indigo-600/10 text-indigo-450 border border-indigo-550/10 shadow-[inset_2px_0_0_#6366f1]'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/30 border border-transparent'
-            }"
-          >
-            <div class="flex items-center gap-2 overflow-hidden mr-2">
-              <MessageSquare size={12} class="shrink-0 {$page.params.id === chat.id ? 'text-indigo-400' : 'text-slate-500'}" />
-              <span class="truncate">{chat.title}</span>
-            </div>
-            <button
-              onclick={(e) => onDeleteChat(chat.id, e)}
-              class="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-red-400 hover:bg-red-500/15 rounded transition-all cursor-pointer shrink-0"
-              title="Supprimer la discussion"
+          {#if editingChatId === chat.id}
+            <div
+              class="group flex items-center justify-between px-3 py-2 text-xs font-medium rounded-lg bg-slate-900/60 border border-indigo-500/30 shadow-[inset_2px_0_0_#6366f1] relative"
             >
-              <Trash2 size={12} />
-            </button>
-          </a>
+              <div class="flex items-center gap-2 overflow-hidden w-full mr-1">
+                <MessageSquare size={12} class="shrink-0 text-indigo-400" />
+                <input
+                  type="text"
+                  bind:value={editingTitle}
+                  onblur={() => saveRename(chat.id)}
+                  onkeydown={(e) => handleRenameKeydown(e, chat.id)}
+                  class="bg-slate-950 text-slate-200 text-xs px-1.5 py-0.5 border border-indigo-500/40 rounded focus:outline-none focus:border-indigo-400 w-full font-semibold"
+                  use:focusOnMount
+                />
+              </div>
+            </div>
+          {:else}
+            <a
+              href="/chat/{chat.id}"
+              ondblclick={(e) => startEditing(chat.id, chat.title, e)}
+              class="group flex items-center justify-between px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200 relative {
+                $page.params.id === chat.id
+                  ? 'bg-indigo-600/10 text-indigo-450 border border-indigo-550/10 shadow-[inset_2px_0_0_#6366f1]'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/30 border border-transparent'
+              }"
+            >
+              <div class="flex items-center gap-2 overflow-hidden mr-2">
+                <MessageSquare size={12} class="shrink-0 {$page.params.id === chat.id ? 'text-indigo-400' : 'text-slate-500'}" />
+                <span class="truncate">{chat.title}</span>
+              </div>
+              <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 shrink-0">
+                <button
+                  onclick={(e) => startEditing(chat.id, chat.title, e)}
+                  class="p-1 text-slate-500 hover:text-indigo-400 hover:bg-indigo-500/15 rounded transition-all cursor-pointer"
+                  title="Renommer la discussion"
+                >
+                  <Edit2 size={11} />
+                </button>
+                <button
+                  onclick={(e) => onDeleteChat(chat.id, e)}
+                  class="p-1 text-slate-500 hover:text-red-400 hover:bg-red-500/15 rounded transition-all cursor-pointer"
+                  title="Supprimer la discussion"
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
+            </a>
+          {/if}
         {/each}
       {/if}
     </div>
