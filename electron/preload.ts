@@ -1,0 +1,26 @@
+import { contextBridge, ipcRenderer } from "electron";
+
+contextBridge.exposeInMainWorld("talosAPI", {
+  getChats: () => ipcRenderer.invoke('chats:get'),
+  createChat: (id: string, title: string) => ipcRenderer.invoke('chats:create', id, title),
+  deleteChat: (id: string) => ipcRenderer.invoke('chats:delete', id),
+  
+  getProviders: () => ipcRenderer.invoke('providers:get'),
+  saveProvider: (id: string, name: string, baseUrl: string, apiKey: string) => ipcRenderer.invoke('providers:save', id, name, baseUrl, apiKey),
+  deleteProvider: (id: string) => ipcRenderer.invoke('providers:delete', id),
+  
+  getModels: (providerId: string) => ipcRenderer.invoke('models:get', providerId),
+  addModel: (id: string, providerId: string, name: string) => ipcRenderer.invoke('models:add', id, providerId, name),
+  deleteModel: (id: string) => ipcRenderer.invoke('models:delete', id),
+
+  getMessages: (chatId: string) => ipcRenderer.invoke('messages:get', chatId),
+  addMessage: (id: string, chatId: string, role: string, content: string) => ipcRenderer.invoke('messages:add', id, chatId, role, content),
+  
+  getSetting: (key: string, defaultValue: string) => ipcRenderer.invoke('settings:get', key, defaultValue),
+  setSetting: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value),
+  
+  getCwd: () => ipcRenderer.invoke('cwd:get'),
+  selectCwd: () => ipcRenderer.invoke('cwd:select'),
+  
+  chat: (providerId: string, model: string, chatMessages: any[]) => ipcRenderer.invoke('openai:chat', providerId, model, chatMessages),
+});
