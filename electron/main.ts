@@ -150,6 +150,8 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
     if (!provider) {
       throw new Error(`Provider introuvable : ${providerId}`);
     }
+    console.log(`[IPC] openai:chat-stream-start called:`, { providerId, model, resolvedBaseUrl: provider.base_url });
+    
     
     // S'assurer que le chemin d'Ollama finit par /v1 pour le client officiel
     let baseUrl = provider.base_url;
