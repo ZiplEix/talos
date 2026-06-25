@@ -29,6 +29,7 @@
 		"vite-plugin-electron": "^1.1.0"
 	},
 	"dependencies": {
+		"ignore": "^7.0.5",
 		"lucide-svelte": "^1.0.1",
 		"marked": "^18.0.5",
 		"openai": "^6.45.0",
