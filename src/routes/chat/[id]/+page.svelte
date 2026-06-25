@@ -69,8 +69,20 @@
     }
   });
 
-  onMount(async () => {
-    await loadInitialSettings();
+  onMount(() => {
+    loadInitialSettings();
+
+    const handleRenameEvent = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail.id === chatId) {
+        chatTitle = detail.title;
+      }
+    };
+
+    window.addEventListener('talos:chat-renamed', handleRenameEvent);
+    return () => {
+      window.removeEventListener('talos:chat-renamed', handleRenameEvent);
+    };
   });
 
   async function loadInitialSettings() {

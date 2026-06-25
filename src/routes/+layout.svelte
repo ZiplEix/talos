@@ -104,6 +104,26 @@
     chats = chats.filter(c => c.id !== id);
     localStorage.setItem('talos_chats', JSON.stringify(chats));
   }
+
+  async function renameChat(id: string, title: string) {
+    if (window.talosAPI) {
+      try {
+        await window.talosAPI.renameChat(id, title);
+        chats = await window.talosAPI.getChats();
+      } catch (err) {
+        console.error(err);
+        renameChatInLocalStorage(id, title);
+      }
+    } else {
+      renameChatInLocalStorage(id, title);
+    }
+    window.dispatchEvent(new CustomEvent('talos:chat-renamed', { detail: { id, title } }));
+  }
+
+  function renameChatInLocalStorage(id: string, title: string) {
+    chats = chats.map(c => c.id === id ? { ...c, title } : c);
+    localStorage.setItem('talos_chats', JSON.stringify(chats));
+  }
 </script>
 
 <svelte:head>
@@ -118,6 +138,7 @@
     {chats}
     onCreateChat={createNewChat}
     onDeleteChat={deleteChat}
+    onRenameChat={renameChat}
   />
 
   <!-- Main View Container -->
