@@ -3,6 +3,7 @@ import { OpenAI } from 'openai';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDb, getChats, createChat, deleteChat, getProviders, saveProvider, deleteProvider, getModels, addModel, deleteModel, getMessages, addMessage, getSetting, setSetting } from './db';
+import { getOpenAITools, executeTool } from './tools';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -140,8 +141,9 @@ ipcMain.handle('openai:chat', async (_, providerId: string, model: string, chatM
   return response.choices[0].message;
 });
 
-// Handler pour le streaming d'appels d'API OpenAI / Ollama
+// Handler pour le streaming d'appels d'API OpenAI / Ollama avec exécution automatique d'outils
 ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: string, chatMessages: any[], chatId: string, requestId: string) => {
+  let currentRequestId = requestId;
   try {
     const providersList = await getProviders();
     const provider = providersList.find(p => p.id === providerId);
@@ -160,31 +162,163 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
       baseURL: baseUrl,
     });
 
-    const stream = await client.chat.completions.create({
-      model: model,
-      messages: chatMessages.map(m => ({ role: m.role, content: m.content })),
-      stream: true,
+    // Assainir l'historique : convertir les anciens résultats d'outils (role: 'tool')
+    // en messages système afin d'éviter les erreurs de structure de l'API OpenAI
+    const apiMessages = chatMessages.map((m: any) => {
+      if (m.role === 'tool') {
+        return { role: 'system', content: `[Sortie outil historique] : ${m.content}` };
+      }
+      return { role: m.role, content: m.content };
     });
 
-    let fullText = '';
-    for await (const chunk of stream) {
-      const text = chunk.choices[0]?.delta?.content || '';
-      if (text) {
-        fullText += text;
-        event.sender.send('openai:chat-stream-chunk', { chatId, requestId, text });
+    let continueAgentLoop = true;
+
+    while (continueAgentLoop) {
+      const streamParams: any = {
+        model: model,
+        messages: apiMessages,
+      };
+
+      let stream;
+      try {
+        streamParams.tools = getOpenAITools();
+        stream = await client.chat.completions.create({
+          ...streamParams,
+          stream: true,
+        });
+      } catch (err: any) {
+        // Si le modèle ou fournisseur ne prend pas en charge les tools, on retombe en standard
+        if (err.message && (err.message.includes('tools') || err.message.includes('tool_choice') || err.message.includes('not supported'))) {
+          console.warn('Tools not supported by this model, falling back to standard completion.');
+          delete streamParams.tools;
+          stream = await client.chat.completions.create({
+            ...streamParams,
+            stream: true,
+          });
+        } else {
+          throw err;
+        }
+      }
+
+      let fullText = '';
+      const toolCallsAccumulator: any[] = [];
+
+      for await (const chunk of stream) {
+        const choice = chunk.choices[0];
+        if (!choice) continue;
+
+        const delta = choice.delta;
+
+        // Diffuser les fragments de texte
+        const text = delta.content || '';
+        if (text) {
+          fullText += text;
+          event.sender.send('openai:chat-stream-chunk', { chatId, requestId: currentRequestId, text });
+        }
+
+        // Accumuler les fragments d'appels d'outils
+        if (delta.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const idx = tc.index;
+            if (!toolCallsAccumulator[idx]) {
+              toolCallsAccumulator[idx] = {
+                id: tc.id || '',
+                type: tc.type || 'function',
+                function: {
+                  name: tc.function?.name || '',
+                  arguments: tc.function?.arguments || ''
+                }
+              };
+            } else {
+              if (tc.id) toolCallsAccumulator[idx].id = tc.id;
+              if (tc.function?.name) toolCallsAccumulator[idx].function.name += tc.function.name;
+              if (tc.function?.arguments) toolCallsAccumulator[idx].function.arguments += tc.function.arguments;
+            }
+          }
+        }
+      }
+
+      // Filtrer pour éliminer les structures d'appels vides
+      const actualToolCalls = toolCallsAccumulator.filter(tc => tc && tc.function.name);
+
+      if (actualToolCalls.length > 0) {
+        // Enregistrer l'appel de l'assistant dans la liste de messages indigène à OpenAI
+        apiMessages.push({
+          role: 'assistant',
+          content: fullText || undefined,
+          tool_calls: actualToolCalls
+        });
+
+        // 1. Synthétiser l'appel d'outil sous forme textuelle lisible pour SQLite & l'IHM Svelte
+        const toolCallSummaries = actualToolCalls.map(tc => {
+          return `🔧 **Outil** : \`${tc.function.name}(${tc.function.arguments.trim()})\``;
+        }).join('\n');
+
+        const assistantToolMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
+        await addMessage(assistantToolMsgId, chatId, 'assistant', toolCallSummaries);
+        event.sender.send('openai:chat-tool-message', {
+          id: assistantToolMsgId,
+          chatId,
+          role: 'assistant',
+          content: toolCallSummaries
+        });
+
+        // 2. Exécuter chaque outil et envoyer son résultat à l'IHM et au modèle
+        for (const tc of actualToolCalls) {
+          let args: any = {};
+          try {
+            args = JSON.parse(tc.function.arguments);
+          } catch (e) {
+            // Arguments JSON tronqués/malformés
+          }
+
+          // Exécuter l'outil
+          const result = await executeTool(tc.function.name, args);
+
+          // Ajouter le résultat dans l'historique OpenAI natif pour le prochain tour
+          apiMessages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: result
+          });
+
+          // Enregistrer et notifier le renderer
+          const toolResultMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
+          const toolResultFormatted = `📥 **Résultat** : \n\`\`\`\n${result}\n\`\`\``;
+          await addMessage(toolResultMsgId, chatId, 'tool', toolResultFormatted);
+          event.sender.send('openai:chat-tool-message', {
+            id: toolResultMsgId,
+            chatId,
+            role: 'tool',
+            content: toolResultFormatted
+          });
+        }
+
+        // On génère un nouvel identifiant pour la réponse finale ou la prochaine vague d'outils
+        currentRequestId = `msg-${Math.random().toString(36).substring(2, 9)}`;
+        // Notifier le renderer de créer un placeholder pour ce nouveau message
+        event.sender.send('openai:chat-tool-message', {
+          id: currentRequestId,
+          chatId,
+          role: 'assistant',
+          content: ''
+        });
+
+        // La boucle continue avec l'historique enrichi des résultats d'outils
+      } else {
+        // Enregistrer la réponse finale dans SQLite
+        await addMessage(currentRequestId, chatId, 'assistant', fullText);
+
+        // Terminer le flux pour l'IHM
+        event.sender.send('openai:chat-stream-end', { chatId, requestId: currentRequestId });
+        continueAgentLoop = false;
       }
     }
-
-    // Sauvegarder le message complet dans la base de données
-    await addMessage(requestId, chatId, 'assistant', fullText);
-
-    // Notifier le renderer de la fin du flux
-    event.sender.send('openai:chat-stream-end', { chatId, requestId });
   } catch (err: any) {
     console.error('Error in openai:chat-stream-start:', err);
     event.sender.send('openai:chat-stream-error', { 
       chatId, 
-      requestId, 
+      requestId: currentRequestId, 
       error: err instanceof Error ? err.message : String(err) 
     });
   }

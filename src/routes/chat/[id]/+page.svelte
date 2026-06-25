@@ -265,8 +265,8 @@
         clearStreamSubscriptions();
 
         const unsubChunk = window.talosAPI.onChatStreamChunk((data) => {
-          if (data.chatId === chatId && data.requestId === aiMsgId) {
-            const idx = messages.findIndex(m => m.id === aiMsgId);
+          if (data.chatId === chatId) {
+            const idx = messages.findIndex(m => m.id === data.requestId);
             if (idx !== -1) {
               messages[idx] = {
                 ...messages[idx],
@@ -281,7 +281,7 @@
         });
 
         const unsubEnd = window.talosAPI.onChatStreamEnd((data) => {
-          if (data.chatId === chatId && data.requestId === aiMsgId) {
+          if (data.chatId === chatId) {
             clearStreamSubscriptions();
             isThinking = false;
             scrollToBottom();
@@ -289,10 +289,10 @@
         });
 
         const unsubError = window.talosAPI.onChatStreamError((data) => {
-          if (data.chatId === chatId && data.requestId === aiMsgId) {
+          if (data.chatId === chatId) {
             clearStreamSubscriptions();
             isThinking = false;
-            const idx = messages.findIndex(m => m.id === aiMsgId);
+            const idx = messages.findIndex(m => m.id === data.requestId);
             if (idx !== -1) {
               messages[idx] = {
                 ...messages[idx],
@@ -303,7 +303,22 @@
           }
         });
 
-        streamCleanups.push(unsubChunk, unsubEnd, unsubError);
+        const unsubToolMessage = window.talosAPI.onChatToolMessage((data) => {
+          if (data.chatId === chatId) {
+            const idx = messages.findIndex(m => m.id === data.id);
+            if (idx === -1) {
+              messages.push(data);
+            } else {
+              messages[idx] = data;
+            }
+            if (isThinking) {
+              isThinking = false;
+            }
+            scrollToBottom();
+          }
+        });
+
+        streamCleanups.push(unsubChunk, unsubEnd, unsubError, unsubToolMessage);
 
         window.talosAPI.startChatStream(activeProviderId, activeModel, cleanMessages, chatId, aiMsgId);
       } else {
