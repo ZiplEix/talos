@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { page } from '$app/stores';
   import { 
     Send, Bot, User, Cpu, Sparkles, FolderOpen, 
@@ -13,6 +13,16 @@
 
   let chatTitle = $state('Discussion');
   let messages = $state<Array<{ id: string; role: string; content: string }>>([]);
+
+  let streamCleanups: (() => void)[] = [];
+  function clearStreamSubscriptions() {
+    streamCleanups.forEach(unsub => unsub());
+    streamCleanups = [];
+  }
+
+  onDestroy(() => {
+    clearStreamSubscriptions();
+  });
   let inputMessage = $state('');
   let isThinking = $state(false);
   let chatContainer = $state<HTMLDivElement | null>(null);
@@ -53,6 +63,7 @@
   // Surveille le changement de chatId pour recharger la conversation
   $effect(() => {
     if (chatId) {
+      clearStreamSubscriptions();
       loadConversationData(chatId);
     }
   });
@@ -241,15 +252,60 @@
     isThinking = true;
     try {
       if (window.talosAPI) {
-        // Envoi réel via le SDK OpenAI exécuté par le backend Electron
-        const plainMessages = messages.map(m => ({ id: m.id, role: m.role, content: m.content }));
-        const aiResponse = await window.talosAPI.chat(activeProviderId, activeModel, plainMessages);
-        const aiMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
-        const aiContent = aiResponse.content || '';
-        const assistantMsg = { id: aiMsgId, role: 'assistant', content: aiContent };
+        // Envoi en mode streaming réel via Electron
+        const plainMessages = messages.map(m => ({ role: m.role, content: m.content }));
+        const cleanMessages = $state.snapshot(plainMessages);
         
+        const aiMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
+        const assistantMsg = { id: aiMsgId, role: 'assistant', content: '' };
         messages.push(assistantMsg);
-        await window.talosAPI.addMessage(aiMsgId, chatId, 'assistant', aiContent);
+        await scrollToBottom();
+
+        // Nettoyer les abonnements précédents avant de démarrer un nouveau stream
+        clearStreamSubscriptions();
+
+        const unsubChunk = window.talosAPI.onChatStreamChunk((data) => {
+          if (data.chatId === chatId && data.requestId === aiMsgId) {
+            const idx = messages.findIndex(m => m.id === aiMsgId);
+            if (idx !== -1) {
+              messages[idx] = {
+                ...messages[idx],
+                content: messages[idx].content + data.text
+              };
+              if (isThinking) {
+                isThinking = false;
+              }
+              scrollToBottom();
+            }
+          }
+        });
+
+        const unsubEnd = window.talosAPI.onChatStreamEnd((data) => {
+          if (data.chatId === chatId && data.requestId === aiMsgId) {
+            clearStreamSubscriptions();
+            isThinking = false;
+            scrollToBottom();
+          }
+        });
+
+        const unsubError = window.talosAPI.onChatStreamError((data) => {
+          if (data.chatId === chatId && data.requestId === aiMsgId) {
+            clearStreamSubscriptions();
+            isThinking = false;
+            const idx = messages.findIndex(m => m.id === aiMsgId);
+            if (idx !== -1) {
+              messages[idx] = {
+                ...messages[idx],
+                content: messages[idx].content + `\n\n*(Erreur lors du streaming : ${data.error})*`
+              };
+            }
+            scrollToBottom();
+          }
+        });
+
+        streamCleanups.push(unsubChunk, unsubEnd, unsubError);
+
+        window.talosAPI.startChatStream(activeProviderId, activeModel, cleanMessages, chatId, aiMsgId);
       } else {
         // Simulation en mode fallback localStorage
         await new Promise(r => setTimeout(r, 1200));
@@ -259,14 +315,15 @@
         
         messages.push(assistantMsg);
         saveMessageToLocalStorage(chatId, assistantMsg);
+        isThinking = false;
+        await scrollToBottom();
       }
     } catch (err: any) {
       console.error(err);
+      isThinking = false;
       const aiMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
       const errMsg = { id: aiMsgId, role: 'assistant', content: `Désolé, une erreur s'est produite lors de l'appel d'API : ${err.message || err}` };
       messages.push(errMsg);
-    } finally {
-      isThinking = false;
       await scrollToBottom();
     }
   }
