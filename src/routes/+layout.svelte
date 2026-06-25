@@ -1,0 +1,143 @@
+<script lang="ts">
+  import './layout.css';
+  import { onMount } from 'svelte';
+  import { page } from '$app/stores';
+  import { goto } from '$app/navigation';
+  import favicon from '$lib/assets/favicon.svg';
+  import Sidebar from '$lib/components/Sidebar.svelte';
+  import Header from '$lib/components/Header.svelte';
+
+
+
+  let { children } = $props();
+
+  let isSidebarOpen = $state(true);
+  let chats = $state<Array<{ id: string; title: string; created_at: number }>>([]);
+
+  onMount(async () => {
+    // Load sidebar state
+    const savedSidebarState = localStorage.getItem('talos_sidebar_open');
+    if (savedSidebarState !== null) {
+      isSidebarOpen = savedSidebarState === 'true';
+    }
+
+    // Load chats
+    await loadChats();
+  });
+
+  async function loadChats() {
+    if (window.talosAPI) {
+      try {
+        chats = await window.talosAPI.getChats();
+      } catch (err) {
+        console.error('Failed to fetch from SQLite, fallback to localStorage:', err);
+        loadChatsFromLocalStorage();
+      }
+    } else {
+      loadChatsFromLocalStorage();
+    }
+  }
+
+  function loadChatsFromLocalStorage() {
+    const saved = localStorage.getItem('talos_chats');
+    if (saved) {
+      chats = JSON.parse(saved);
+    } else {
+      chats = [];
+      localStorage.setItem('talos_chats', JSON.stringify(chats));
+    }
+  }
+
+  function toggleSidebar() {
+    isSidebarOpen = !isSidebarOpen;
+    localStorage.setItem('talos_sidebar_open', String(isSidebarOpen));
+  }
+
+  async function createNewChat() {
+    const newId = Math.random().toString(36).substring(2, 9);
+    const newTitle = `Nouveau Chat ${chats.length + 1}`;
+    const newChat = { id: newId, title: newTitle, created_at: Date.now() };
+
+    if (window.talosAPI) {
+      try {
+        await window.talosAPI.createChat(newId, newTitle);
+        chats = await window.talosAPI.getChats();
+      } catch (err) {
+        console.error(err);
+        saveNewChatToLocalStorage(newChat);
+      }
+    } else {
+      saveNewChatToLocalStorage(newChat);
+    }
+
+    goto(`/chat/${newId}`);
+  }
+
+  function saveNewChatToLocalStorage(newChat: any) {
+    chats = [newChat, ...chats];
+    localStorage.setItem('talos_chats', JSON.stringify(chats));
+  }
+
+  async function deleteChat(id: string, event: Event) {
+    event.stopPropagation();
+    event.preventDefault();
+
+    if (window.talosAPI) {
+      try {
+        await window.talosAPI.deleteChat(id);
+        chats = await window.talosAPI.getChats();
+      } catch (err) {
+        console.error(err);
+        deleteChatFromLocalStorage(id);
+      }
+    } else {
+      deleteChatFromLocalStorage(id);
+    }
+
+    // Redirect to home if deleting active chat
+    if ($page.params.id === id) {
+      goto('/');
+    }
+  }
+
+  function deleteChatFromLocalStorage(id: string) {
+    chats = chats.filter(c => c.id !== id);
+    localStorage.setItem('talos_chats', JSON.stringify(chats));
+  }
+</script>
+
+<svelte:head>
+  <link rel="icon" href={favicon} />
+  <title>Talos AI Platform</title>
+</svelte:head>
+
+<div class="flex h-screen w-screen bg-[#070b15] text-slate-100 overflow-hidden font-sans select-none animate-fade-in">
+  <!-- Sidebar Component -->
+  <Sidebar
+    bind:isSidebarOpen
+    {chats}
+    onCreateChat={createNewChat}
+    onDeleteChat={deleteChat}
+  />
+
+  <!-- Main View Container -->
+  <div class="flex-1 flex flex-col h-full min-w-0 overflow-hidden relative">
+
+    <!-- Top Header Component (Drag Region) -->
+    <Header
+      bind:isSidebarOpen
+      {toggleSidebar}
+    />
+
+    <!-- Main Page Content -->
+    <main class="flex-1 overflow-auto bg-[#070b15] relative z-10">
+      {@render children()}
+    </main>
+  </div>
+</div>
+
+<style>
+  :global(.no-drag) {
+    -webkit-app-region: no-drag;
+  }
+</style>
