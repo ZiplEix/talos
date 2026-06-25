@@ -24,7 +24,8 @@
     clearStreamSubscriptions();
   });
   let inputMessage = $state('');
-  let isThinking = $state(false);
+  let thinkingStatus = $state<'thinking' | 'writing' | 'executing' | ''>('');
+  let isThinking = $derived(thinkingStatus !== '');
   let chatContainer = $state<HTMLDivElement | null>(null);
 
   // Configuration de l'environnement actif
@@ -109,7 +110,7 @@
   }
 
   async function loadConversationData(id: string) {
-    isThinking = false;
+    thinkingStatus = '';
     messages = [];
     attachedFiles = [];
 
@@ -263,7 +264,7 @@
     await scrollToBottom();
 
     // Lancer la réflexion
-    isThinking = true;
+    thinkingStatus = 'thinking';
     try {
       if (window.talosAPI) {
         // Envoi en mode streaming réel via Electron
@@ -287,18 +288,25 @@
                 content: messages[idx].content + data.text
               };
               messages = [...messages]; // Force Svelte reactivity update
-              if (isThinking) {
-                isThinking = false;
-              }
-              scrollToBottom();
+            } else {
+              // Création défensive si l'identifiant n'existe pas encore dans notre liste
+              messages = [...messages, {
+                id: data.requestId,
+                role: 'assistant',
+                content: data.text
+              }];
             }
+            if (thinkingStatus === 'thinking' || thinkingStatus === 'executing') {
+              thinkingStatus = 'writing';
+            }
+            scrollToBottom();
           }
         });
 
         const unsubEnd = window.talosAPI.onChatStreamEnd((data) => {
           if (data.chatId === chatId) {
             clearStreamSubscriptions();
-            isThinking = false;
+            thinkingStatus = '';
             scrollToBottom();
           }
         });
@@ -306,7 +314,7 @@
         const unsubError = window.talosAPI.onChatStreamError((data) => {
           if (data.chatId === chatId) {
             clearStreamSubscriptions();
-            isThinking = false;
+            thinkingStatus = '';
             const idx = messages.findIndex(m => m.id === data.requestId);
             if (idx !== -1) {
               messages[idx] = {
@@ -328,8 +336,8 @@
               messages[idx] = data;
               messages = [...messages]; // Force Svelte reactivity update on modification
             }
-            if (isThinking) {
-              isThinking = false;
+            if (data.role === 'assistant' && data.content.startsWith('`')) {
+              thinkingStatus = 'executing';
             }
             scrollToBottom();
           }
@@ -347,15 +355,15 @@
         
         messages = [...messages, assistantMsg];
         saveMessageToLocalStorage(chatId, assistantMsg);
-        isThinking = false;
+        thinkingStatus = '';
         await scrollToBottom();
       }
     } catch (err: any) {
       console.error(err);
-      isThinking = false;
+      thinkingStatus = '';
       const aiMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
       const errMsg = { id: aiMsgId, role: 'assistant', content: `Désolé, une erreur s'est produite lors de l'appel d'API : ${err.message || err}` };
-      messages.push(errMsg);
+      messages = [...messages, errMsg];
       await scrollToBottom();
     }
   }
@@ -403,9 +411,18 @@
       {/each}
     {/if}
 
-    {#if isThinking}
+    {#if thinkingStatus === 'thinking'}
+      <div class="flex justify-start text-xs text-slate-500 font-mono animate-pulse py-1">
+        <span>talos réfléchit...</span>
+      </div>
+    {:else if thinkingStatus === 'writing'}
       <div class="flex justify-start text-xs text-slate-500 font-mono animate-pulse py-1">
         <span>talos est en train d'écrire...</span>
+      </div>
+    {:else if thinkingStatus === 'executing'}
+      <div class="flex justify-start text-xs text-slate-400 font-mono py-1 items-center gap-1.5">
+        <span class="inline-block w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping"></span>
+        <span class="animate-pulse">talos exécute les outils...</span>
       </div>
     {/if}
   </div>
