@@ -140,6 +140,57 @@ ipcMain.handle('openai:chat', async (_, providerId: string, model: string, chatM
   return response.choices[0].message;
 });
 
+// Handler pour le streaming d'appels d'API OpenAI / Ollama
+ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: string, chatMessages: any[], chatId: string, requestId: string) => {
+  try {
+    const providersList = await getProviders();
+    const provider = providersList.find(p => p.id === providerId);
+    if (!provider) {
+      throw new Error(`Provider introuvable : ${providerId}`);
+    }
+    
+    // S'assurer que le chemin d'Ollama finit par /v1 pour le client officiel
+    let baseUrl = provider.base_url;
+    if (providerId === 'ollama' && !baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) {
+      baseUrl = baseUrl.replace(/\/$/, '') + '/v1';
+    }
+
+    const client = new OpenAI({
+      apiKey: provider.api_key || 'dummy-key',
+      baseURL: baseUrl,
+    });
+
+    const stream = await client.chat.completions.create({
+      model: model,
+      messages: chatMessages.map(m => ({ role: m.role, content: m.content })),
+      stream: true,
+    });
+
+    let fullText = '';
+    for await (const chunk of stream) {
+      const text = chunk.choices[0]?.delta?.content || '';
+      if (text) {
+        fullText += text;
+        event.sender.send('openai:chat-stream-chunk', { chatId, requestId, text });
+      }
+    }
+
+    // Sauvegarder le message complet dans la base de données
+    await addMessage(requestId, chatId, 'assistant', fullText);
+
+    // Notifier le renderer de la fin du flux
+    event.sender.send('openai:chat-stream-end', { chatId, requestId });
+  } catch (err: any) {
+    console.error('Error in openai:chat-stream-start:', err);
+    event.sender.send('openai:chat-stream-error', { 
+      chatId, 
+      requestId, 
+      error: err instanceof Error ? err.message : String(err) 
+    });
+  }
+});
+
+
 app.whenReady().then(async () => {
   try {
     await initDb();
