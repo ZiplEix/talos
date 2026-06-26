@@ -26,6 +26,12 @@
 
     // Listen for chat-created events (from slash commands like /clear, /new)
     window.addEventListener('talos:chat-created', loadChats);
+    window.addEventListener('talos:trigger-new-chat', createNewChat);
+
+    return () => {
+      window.removeEventListener('talos:chat-created', loadChats);
+      window.removeEventListener('talos:trigger-new-chat', createNewChat);
+    };
   });
 
   async function loadChats() {
