@@ -3,6 +3,18 @@ import path from 'path';
 import readline from 'readline';
 import { exec } from 'child_process';
 import ignore from 'ignore';
+import { getDbPath } from './db';
+
+export function isRestrictedPath(filePath: string): boolean {
+  try {
+    const resolved = path.resolve(filePath);
+    const base = path.basename(resolved).toLowerCase();
+    if (base === 'messages.json' || base === 'metadata.json') {
+      return true;
+    }
+  } catch (e) {}
+  return false;
+}
 
 // Helper: Clean HTML tags and decode basic HTML entities
 function cleanHTML(input: string): string {
@@ -45,6 +57,9 @@ export function handleReadTool(args: any): string {
   if (!filePath || typeof filePath !== 'string') {
     return 'error: file_path parameter is missing or not a string';
   }
+  if (isRestrictedPath(filePath)) {
+    return 'error: access to this file is restricted';
+  }
   try {
     return fs.readFileSync(filePath, 'utf8');
   } catch (err: any) {
@@ -57,6 +72,9 @@ export function handleWriteTool(args: any): string {
   const filePath = args.file_path;
   if (!filePath || typeof filePath !== 'string') {
     return 'error: file_path parameter is missing or not a string';
+  }
+  if (isRestrictedPath(filePath)) {
+    return 'error: access to this file is restricted';
   }
   const content = args.content;
   if (typeof content !== 'string') {
@@ -139,6 +157,9 @@ export function handleListTool(args: any): string {
     const entries: ListEntry[] = [];
     for (const file of files) {
       const filePath = path.join(directory, file.name);
+      if (isRestrictedPath(filePath)) {
+        continue;
+      }
       if (gitignoreObj) {
         const relPath = path.relative(gitignoreDir, filePath);
         if (gitignoreObj.ignores(relPath)) {
@@ -240,8 +261,11 @@ function walkTree(
     if (name === '.' || name === '..' || name.startsWith('.')) {
       continue;
     }
+    const fullPath = path.join(dir, name);
+    if (isRestrictedPath(fullPath)) {
+      continue;
+    }
     if (gitignoreObj) {
-      const fullPath = path.join(dir, name);
       const relPath = path.relative(gitignoreDir, fullPath);
       if (gitignoreObj.ignores(relPath)) {
         continue;
@@ -403,6 +427,7 @@ function isBinaryFile(filePath: string): boolean {
 
 function searchFile(filePath: string, patternLower: string, matches: any[], maxMatches: number) {
   try {
+    if (isRestrictedPath(filePath)) return;
     const stats = fs.statSync(filePath);
     if (stats.size > 1024 * 1024) return; // skip > 1MB
     if (isBinaryFile(filePath)) return; // skip binary files
@@ -455,6 +480,9 @@ export async function handleReadRangeTool(args: any): Promise<string> {
   if (!filePath || typeof filePath !== 'string') {
     return 'error: file_path parameter is missing or not a string';
   }
+  if (isRestrictedPath(filePath)) {
+    return 'error: access to this file is restricted';
+  }
   let startLine = Number(args.start_line) || 1;
   if (startLine <= 0) startLine = 1;
   const endLine = Number(args.end_line) || 0;
@@ -489,6 +517,9 @@ export function handleReplaceInFileTool(args: any): string {
   if (!filePath || typeof filePath !== 'string') {
     return 'error: file_path parameter is missing or not a string';
   }
+  if (isRestrictedPath(filePath)) {
+    return 'error: access to this file is restricted';
+  }
   const oldContent = args.old_content;
   if (typeof oldContent !== 'string') {
     return 'error: old_content parameter is missing or not a string';
@@ -519,6 +550,139 @@ export function handleReplaceInFileTool(args: any): string {
   }
 }
 
+// Helper: get absolute path of an artifact
+function getArtifactPath(chatId: string | undefined, filename: string): string {
+  if (!chatId) {
+    throw new Error('error: chatId is required to access artifacts');
+  }
+  if (!filename || typeof filename !== 'string') {
+    throw new Error('error: filename parameter is missing or not a string');
+  }
+  const chatsDir = path.join(getDbPath(), 'chats');
+  const chatFolder = path.join(chatsDir, chatId);
+  const resolvedPath = path.resolve(chatFolder, filename);
+
+  // Security check: Must reside within the chat folder
+  if (!resolvedPath.startsWith(chatFolder)) {
+    throw new Error('error: Directory traversal attempt blocked');
+  }
+
+  // Security check: strictly restrict messages.json and metadata.json
+  const base = path.basename(resolvedPath).toLowerCase();
+  if (base === 'messages.json' || base === 'metadata.json') {
+    throw new Error(`error: Access to ${base} is strictly restricted`);
+  }
+
+  return resolvedPath;
+}
+
+// Handler: Write to an artifact
+export function handleWriteArtifact(args: any, chatId?: string): string {
+  try {
+    const filePath = getArtifactPath(chatId, args.filename);
+    const content = args.content;
+    if (typeof content !== 'string') {
+      return 'error: content parameter is missing or not a string';
+    }
+    // Ensure parent directories exist within the chat folder
+    const dir = path.dirname(filePath);
+    fs.mkdirSync(dir, { recursive: true });
+    
+    fs.writeFileSync(filePath, content, 'utf8');
+    return `success: artifact '${args.filename}' written successfully`;
+  } catch (err: any) {
+    return err.message;
+  }
+}
+
+// Handler: Read an artifact
+export function handleReadArtifact(args: any, chatId?: string): string {
+  try {
+    const filePath = getArtifactPath(chatId, args.filename);
+    if (!fs.existsSync(filePath)) {
+      return `error: artifact '${args.filename}' does not exist`;
+    }
+    return fs.readFileSync(filePath, 'utf8');
+  } catch (err: any) {
+    return err.message;
+  }
+}
+
+// Handler: Replace in artifact
+export function handleReplaceInArtifact(args: any, chatId?: string): string {
+  try {
+    const filePath = getArtifactPath(chatId, args.filename);
+    const oldContent = args.old_content;
+    if (typeof oldContent !== 'string') {
+      return 'error: old_content parameter is missing or not a string';
+    }
+    const newContent = args.new_content;
+    if (typeof newContent !== 'string') {
+      return 'error: new_content parameter is missing or not a string';
+    }
+
+    if (!fs.existsSync(filePath)) {
+      return `error: artifact '${args.filename}' does not exist`;
+    }
+
+    const content = fs.readFileSync(filePath, 'utf8');
+    const count = content.split(oldContent).length - 1;
+    if (count === 0) {
+      return 'error: old_content was not found in the artifact';
+    }
+    if (count > 1) {
+      return `error: old_content matches multiple locations (${count} occurrences); please provide more context`;
+    }
+
+    const updatedContent = content.replace(oldContent, newContent);
+    fs.writeFileSync(filePath, updatedContent, 'utf8');
+    return `success: artifact '${args.filename}' modified successfully`;
+  } catch (err: any) {
+    return err.message;
+  }
+}
+
+// Handler: List artifacts
+export function handleListArtifacts(_args: any, chatId?: string): string {
+  try {
+    if (!chatId) {
+      return 'error: chatId is required to access artifacts';
+    }
+    const chatsDir = path.join(getDbPath(), 'chats');
+    const chatFolder = path.join(chatsDir, chatId);
+    
+    if (!fs.existsSync(chatFolder)) {
+      return '[]';
+    }
+
+    const results: string[] = [];
+    
+    function walk(dir: string) {
+      const files = fs.readdirSync(dir, { withFileTypes: true });
+      for (const file of files) {
+        const fullPath = path.join(dir, file.name);
+        const rel = path.relative(chatFolder, fullPath);
+        
+        // Hide messages.json and metadata.json
+        if (isRestrictedPath(fullPath)) {
+          continue;
+        }
+
+        if (file.isDirectory()) {
+          walk(fullPath);
+        } else {
+          results.push(rel);
+        }
+      }
+    }
+
+    walk(chatFolder);
+    return JSON.stringify(results);
+  } catch (err: any) {
+    return `error: ${err.message}`;
+  }
+}
+
 const primaryParamNames: Record<string, string> = {
   Read: 'file_path',
   Write: 'file_path',
@@ -530,7 +694,10 @@ const primaryParamNames: Record<string, string> = {
   GoogleSearch: 'query',
   FileSearch: 'pattern',
   ReadRange: 'file_path',
-  ReplaceInFile: 'file_path'
+  ReplaceInFile: 'file_path',
+  WriteArtifact: 'filename',
+  ReadArtifact: 'filename',
+  ReplaceInArtifact: 'filename'
 };
 
 export function getToolParamValue(name: string, args: any): string {
@@ -550,7 +717,7 @@ export function getToolParamValue(name: string, args: any): string {
 }
 
 // Dispatch tool execution by name
-export async function executeTool(name: string, args: any): Promise<string> {
+export async function executeTool(name: string, args: any, chatId?: string): Promise<string> {
   switch (name) {
     case 'Read':
       return handleReadTool(args);
@@ -574,6 +741,14 @@ export async function executeTool(name: string, args: any): Promise<string> {
       return await handleReadRangeTool(args);
     case 'ReplaceInFile':
       return handleReplaceInFileTool(args);
+    case 'WriteArtifact':
+      return handleWriteArtifact(args, chatId);
+    case 'ReadArtifact':
+      return handleReadArtifact(args, chatId);
+    case 'ReplaceInArtifact':
+      return handleReplaceInArtifact(args, chatId);
+    case 'ListArtifacts':
+      return handleListArtifacts(args, chatId);
     default:
       return `error: unknown tool call ${name}`;
   }
@@ -794,6 +969,80 @@ export function getOpenAITools() {
             }
           },
           required: ['file_path', 'old_content', 'new_content']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'WriteArtifact',
+        description: 'Write content to an artifact file in the chat private directory (not the workspace)',
+        parameters: {
+          type: 'object',
+          properties: {
+            filename: {
+              type: 'string',
+              description: 'The relative path or filename of the artifact (e.g. implementation-plan.md, task.md, walkthrough.md, scripts/test.js)'
+            },
+            content: {
+              type: 'string',
+              description: 'The content to write'
+            }
+          },
+          required: ['filename', 'content']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'ReadArtifact',
+        description: 'Read the content of an artifact file in the chat private directory',
+        parameters: {
+          type: 'object',
+          properties: {
+            filename: {
+              type: 'string',
+              description: 'The relative path or filename of the artifact to read'
+            }
+          },
+          required: ['filename']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'ReplaceInArtifact',
+        description: 'Replace a specific block of text in an artifact file in the chat private directory',
+        parameters: {
+          type: 'object',
+          properties: {
+            filename: {
+              type: 'string',
+              description: 'The relative path or filename of the artifact to edit'
+            },
+            old_content: {
+              type: 'string',
+              description: 'The exact content in the artifact file to replace'
+            },
+            new_content: {
+              type: 'string',
+              description: 'The new content to replace it with'
+            }
+          },
+          required: ['filename', 'old_content', 'new_content']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'ListArtifacts',
+        description: 'List all artifact files in the chat private directory',
+        parameters: {
+          type: 'object',
+          properties: {}
         }
       }
     }

@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { getOpenAIToolsForMode } from './tools';
+import { getDbPath } from './db';
 
 const PROMPTS_DIR = existsSync(path.join(process.cwd(), 'prompts'))
   ? path.join(process.cwd(), 'prompts')
@@ -57,7 +58,7 @@ export function renderTemplate(template: string, data: Record<string, any>): str
 }
 
 // Assemble and compile the full system prompt based on mode
-export async function getSystemPrompt(mode: string): Promise<string> {
+export async function getSystemPrompt(mode: string, chatId?: string): Promise<string> {
   try {
     const systemPromptPath = path.join(PROMPTS_DIR, 'system.md');
     const modePromptPath = path.join(PROMPTS_DIR, `${mode}.md`);
@@ -66,7 +67,7 @@ export async function getSystemPrompt(mode: string): Promise<string> {
     if (existsSync(systemPromptPath)) {
       systemContent = await fs.readFile(systemPromptPath, 'utf-8');
     } else {
-      systemContent = `You are Talos, an advanced software engineering agent.\nCurrent Working Directory (CWD): {{currentCwd}}`;
+      systemContent = `You are Talos, an advanced software engineering agent.\nCurrent Working Directory (CWD): {{currentCwd}}\nArtifacts Directory: {{chatFolder}}`;
     }
 
     let modeContent = '';
@@ -81,8 +82,12 @@ export async function getSystemPrompt(mode: string): Promise<string> {
       description: t.function.description
     }));
 
+    const chatsDir = path.join(getDbPath(), 'chats');
+    const chatFolder = chatId ? path.join(chatsDir, chatId) : '';
+
     const data = {
       currentCwd: process.cwd(),
+      chatFolder: chatFolder,
       tools: toolsData,
       hasTools: toolsData.length > 0
     };

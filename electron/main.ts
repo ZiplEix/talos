@@ -383,7 +383,7 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
           }
 
           // Exécuter l'outil
-          const result = await executeTool(tc.function.name, args);
+          const result = await executeTool(tc.function.name, args, chatId);
 
           if (aborted) break;
 
