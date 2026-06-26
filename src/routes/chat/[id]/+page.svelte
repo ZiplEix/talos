@@ -47,6 +47,7 @@
   let folderName = $derived(cwd ? (cwd.split(/[/\\]/).pop() || cwd) : 'Dossier');
   
   let textareaElement = $state<HTMLTextAreaElement | null>(null);
+  let editAreaElement = $state<HTMLTextAreaElement | null>(null);
 
   // Auto-resize the input textarea height based on content
   $effect(() => {
@@ -54,6 +55,15 @@
     if (textareaElement) {
       textareaElement.style.height = 'auto';
       textareaElement.style.height = `${textareaElement.scrollHeight}px`;
+    }
+  });
+
+  // Auto-resize the editing textarea height based on content
+  $effect(() => {
+    const _val = editingMessageText;
+    if (editAreaElement) {
+      editAreaElement.style.height = 'auto';
+      editAreaElement.style.height = `${editAreaElement.scrollHeight}px`;
     }
   });
 
@@ -514,6 +524,7 @@
                 <div class="flex items-center gap-3 w-full bg-slate-900/20 border border-slate-900 focus-within:border-indigo-500/40 rounded-2xl px-4 py-2 transition-all relative">
                   <textarea
                     bind:value={editingMessageText}
+                    bind:this={editAreaElement}
                     rows="1"
                     class="flex-1 bg-transparent text-sm text-slate-200 placeholder-slate-500 resize-none outline-none max-h-[240px] py-1.5 scrollbar-thin scrollbar-thumb-slate-900"
                   ></textarea>
