@@ -86,12 +86,15 @@ export async function initDb(): Promise<void> {
 
 export async function getChats(): Promise<Array<{ id: string; title: string; created_at: number }>> {
   try {
-    const files = await fs.readdir(CHATS_DIR);
-    const jsonFiles = files.filter(f => f.endsWith('.json'));
+    const entries = await fs.readdir(CHATS_DIR, { withFileTypes: true });
+    const chatDirectories = entries.filter(entry => entry.isDirectory());
     const chatsData = await Promise.all(
-      jsonFiles.map(async (file) => {
-        const filePath = path.join(CHATS_DIR, file);
-        const data = await readJsonFile<any>(filePath, null);
+      chatDirectories.map(async (dir) => {
+        const metadataPath = path.join(CHATS_DIR, dir.name, 'metadata.json');
+        if (!existsSync(metadataPath)) {
+          return null;
+        }
+        const data = await readJsonFile<any>(metadataPath, null);
         if (data && data.id && data.title) {
           return {
             id: data.id,
@@ -110,21 +113,27 @@ export async function getChats(): Promise<Array<{ id: string; title: string; cre
 }
 
 export async function createChat(id: string, title: string): Promise<void> {
-  const filePath = path.join(CHATS_DIR, `${id}.json`);
-  const chatData = {
+  const chatFolder = path.join(CHATS_DIR, id);
+  await fs.mkdir(chatFolder, { recursive: true });
+  
+  const metadataPath = path.join(chatFolder, 'metadata.json');
+  const messagesPath = path.join(chatFolder, 'messages.json');
+  
+  const metadata = {
     id,
     title,
-    created_at: Date.now(),
-    messages: []
+    created_at: Date.now()
   };
-  await writeJsonFile(filePath, chatData);
+  
+  await writeJsonFile(metadataPath, metadata);
+  await writeJsonFile(messagesPath, []);
 }
 
 export async function deleteChat(id: string): Promise<void> {
-  const filePath = path.join(CHATS_DIR, `${id}.json`);
+  const chatFolder = path.join(CHATS_DIR, id);
   try {
-    if (existsSync(filePath)) {
-      await fs.unlink(filePath);
+    if (existsSync(chatFolder)) {
+      await fs.rm(chatFolder, { recursive: true, force: true });
     }
   } catch (error) {
     console.error(`Error deleting chat ${id}:`, error);
@@ -133,11 +142,12 @@ export async function deleteChat(id: string): Promise<void> {
 }
 
 export async function renameChat(id: string, title: string): Promise<void> {
-  const filePath = path.join(CHATS_DIR, `${id}.json`);
-  const chatData = await readJsonFile<any>(filePath, null);
-  if (chatData) {
-    chatData.title = title;
-    await writeJsonFile(filePath, chatData);
+  const chatFolder = path.join(CHATS_DIR, id);
+  const metadataPath = path.join(chatFolder, 'metadata.json');
+  const metadata = await readJsonFile<any>(metadataPath, null);
+  if (metadata) {
+    metadata.title = title;
+    await writeJsonFile(metadataPath, metadata);
   } else {
     throw new Error(`Chat ${id} not found`);
   }
@@ -148,12 +158,8 @@ export async function renameChat(id: string, title: string): Promise<void> {
 // ==========================================
 
 export async function getMessages(chatId: string): Promise<Array<{ id: string; role: string; content: string }>> {
-  const filePath = path.join(CHATS_DIR, `${chatId}.json`);
-  const chatData = await readJsonFile<any>(filePath, null);
-  if (chatData && chatData.messages) {
-    return chatData.messages;
-  }
-  return [];
+  const messagesPath = path.join(CHATS_DIR, chatId, 'messages.json');
+  return await readJsonFile<any[]>(messagesPath, []);
 }
 
 export async function addMessage(
@@ -164,38 +170,38 @@ export async function addMessage(
   toolCalls?: any[],
   toolCallId?: string
 ): Promise<void> {
-  const filePath = path.join(CHATS_DIR, `${chatId}.json`);
-  const chatData = await readJsonFile<any>(filePath, null);
-  if (chatData) {
-    if (!chatData.messages) {
-      chatData.messages = [];
-    }
-    const index = chatData.messages.findIndex((m: any) => m.id === id);
-    const messageObj: any = {
-      id,
-      role,
-      content,
-      created_at: Date.now()
-    };
-    if (toolCalls !== undefined) {
-      messageObj.tool_calls = toolCalls;
-    }
-    if (toolCallId !== undefined) {
-      messageObj.tool_call_id = toolCallId;
-    }
-
-    if (index !== -1) {
-      chatData.messages[index] = {
-        ...chatData.messages[index],
-        ...messageObj
-      };
-    } else {
-      chatData.messages.push(messageObj);
-    }
-    await writeJsonFile(filePath, chatData);
-  } else {
+  const chatFolder = path.join(CHATS_DIR, chatId);
+  const messagesPath = path.join(chatFolder, 'messages.json');
+  
+  if (!existsSync(chatFolder)) {
     throw new Error(`Chat ${chatId} not found to add message`);
   }
+  
+  const messages = await readJsonFile<any[]>(messagesPath, []);
+  const index = messages.findIndex((m: any) => m.id === id);
+  
+  const messageObj: any = {
+    id,
+    role,
+    content,
+    created_at: Date.now()
+  };
+  if (toolCalls !== undefined) {
+    messageObj.tool_calls = toolCalls;
+  }
+  if (toolCallId !== undefined) {
+    messageObj.tool_call_id = toolCallId;
+  }
+
+  if (index !== -1) {
+    messages[index] = {
+      ...messages[index],
+      ...messageObj
+    };
+  } else {
+    messages.push(messageObj);
+  }
+  await writeJsonFile(messagesPath, messages);
 }
 
 // ==========================================
