@@ -2,8 +2,9 @@ import { app, BrowserWindow, ipcMain, dialog, Menu, MenuItem } from 'electron';
 import { OpenAI } from 'openai';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { initDb, getChats, createChat, deleteChat, renameChat, getProviders, saveProvider, deleteProvider, getModels, addModel, deleteModel, getMessages, addMessage, saveMessages, getSetting, setSetting, getDbPath } from './db';
-import { getOpenAITools, executeTool, getToolParamValue } from './tools';
+import { initDb, getChats, createChat, deleteChat, renameChat, updateChatMode, getChatMode, getProviders, saveProvider, deleteProvider, getModels, addModel, deleteModel, getMessages, addMessage, saveMessages, getSetting, setSetting, getDbPath } from './db';
+import { getOpenAITools, getOpenAIToolsForMode, executeTool, getToolParamValue } from './tools';
+import { getSystemPrompt } from './prompts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -90,6 +91,10 @@ ipcMain.handle('chats:delete', async (_, id: string) => {
 
 ipcMain.handle('chats:rename', async (_, id: string, title: string) => {
   return await renameChat(id, title);
+});
+
+ipcMain.handle('chats:update-mode', async (_, chatId: string, mode: string) => {
+  return await updateChatMode(chatId, mode);
 });
 
 // Handlers pour les Providers et Modèles
@@ -243,12 +248,10 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
       baseURL: baseUrl,
     });
 
-    // Définir le prompt système dynamique avec le CWD actuel
-    const currentCwd = process.cwd();
-    const systemPrompt = `Tu es Talos, un assistant de code intelligent.
-Le répertoire de travail actuel (CWD) est : ${currentCwd}.
-Tu as accès à des outils pour lire, écrire, lister, rechercher des fichiers, et exécuter des commandes via Bash.
-Utilise ces outils de manière ciblée, intelligente et sécurisée pour répondre aux demandes de l'utilisateur.`;
+    // Récupérer le mode du chat et compiler le prompt système associé
+    const mode = await getChatMode(chatId);
+    const systemPrompt = await getSystemPrompt(mode);
+    const toolsForMode = getOpenAIToolsForMode(mode);
 
     // Assainir l'historique et injecter le prompt système
     const apiMessages = [
@@ -277,7 +280,11 @@ Utilise ces outils de manière ciblée, intelligente et sécurisée pour répond
 
       let stream;
       try {
-        streamParams.tools = getOpenAITools();
+        if (toolsForMode.length > 0) {
+          streamParams.tools = toolsForMode;
+        } else {
+          delete streamParams.tools;
+        }
         stream = await client.chat.completions.create({
           ...streamParams,
           stream: true,

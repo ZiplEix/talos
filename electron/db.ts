@@ -84,7 +84,7 @@ export async function initDb(): Promise<void> {
 // CHATS DATABASE METHODS
 // ==========================================
 
-export async function getChats(): Promise<Array<{ id: string; title: string; created_at: number }>> {
+export async function getChats(): Promise<Array<{ id: string; title: string; created_at: number; mode: string }>> {
   try {
     const entries = await fs.readdir(CHATS_DIR, { withFileTypes: true });
     const chatDirectories = entries.filter(entry => entry.isDirectory());
@@ -99,7 +99,8 @@ export async function getChats(): Promise<Array<{ id: string; title: string; cre
           return {
             id: data.id,
             title: data.title,
-            created_at: data.created_at || Date.now()
+            created_at: data.created_at || Date.now(),
+            mode: data.mode || 'agent'
           };
         }
         return null;
@@ -122,7 +123,8 @@ export async function createChat(id: string, title: string): Promise<void> {
   const metadata = {
     id,
     title,
-    created_at: Date.now()
+    created_at: Date.now(),
+    mode: 'agent'
   };
   
   await writeJsonFile(metadataPath, metadata);
@@ -150,6 +152,18 @@ export async function renameChat(id: string, title: string): Promise<void> {
     await writeJsonFile(metadataPath, metadata);
   } else {
     throw new Error(`Chat ${id} not found`);
+  }
+}
+
+export async function updateChatMode(id: string, mode: string): Promise<void> {
+  const chatFolder = path.join(CHATS_DIR, id);
+  const metadataPath = path.join(chatFolder, 'metadata.json');
+  const metadata = await readJsonFile<any>(metadataPath, null);
+  if (metadata) {
+    metadata.mode = mode;
+    await writeJsonFile(metadataPath, metadata);
+  } else {
+    throw new Error(`Chat ${id} not found to update mode`);
   }
 }
 
@@ -284,4 +298,14 @@ export async function deleteModel(id: string): Promise<void> {
   const models = await readJsonFile<Array<{ id: string; provider_id: string; name: string }>>(MODELS_FILE, []);
   const filteredModels = models.filter(m => m.id !== id);
   await writeJsonFile(MODELS_FILE, filteredModels);
+}
+
+export async function getChatMode(id: string): Promise<string> {
+  const chatFolder = path.join(CHATS_DIR, id);
+  const metadataPath = path.join(chatFolder, 'metadata.json');
+  if (!existsSync(metadataPath)) {
+    return 'agent';
+  }
+  const metadata = await readJsonFile<any>(metadataPath, null);
+  return metadata?.mode || 'agent';
 }

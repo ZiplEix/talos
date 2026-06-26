@@ -10,10 +10,11 @@ declare global {
 	}
 	interface Window {
 		talosAPI?: {
-			getChats: () => Promise<Array<{ id: string; title: string; created_at: number }>>;
+			getChats: () => Promise<Array<{ id: string; title: string; created_at: number; mode: string }>>;
 			createChat: (id: string, title: string) => Promise<void>;
 			deleteChat: (id: string) => Promise<void>;
 			renameChat: (id: string, title: string) => Promise<void>;
+			updateChatMode: (chatId: string, mode: string) => Promise<void>;
 			getDbPath: () => Promise<string>;
 			
 			getProviders: () => Promise<Array<{ id: string; name: string; base_url: string; api_key: string }>>;

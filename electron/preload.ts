@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("talosAPI", {
   createChat: (id: string, title: string) => ipcRenderer.invoke('chats:create', id, title),
   deleteChat: (id: string) => ipcRenderer.invoke('chats:delete', id),
   renameChat: (id: string, title: string) => ipcRenderer.invoke('chats:rename', id, title),
+  updateChatMode: (chatId: string, mode: string) => ipcRenderer.invoke('chats:update-mode', chatId, mode),
   getDbPath: () => ipcRenderer.invoke('db:path'),
   
   getProviders: () => ipcRenderer.invoke('providers:get'),

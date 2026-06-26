@@ -6,6 +6,7 @@
     id: string;
     title: string;
     created_at: number;
+    mode?: string;
   }
 
   let {
@@ -154,6 +155,16 @@
               <div class="flex items-center gap-2 overflow-hidden mr-2">
                 <MessageSquare size={12} class="shrink-0 {$page.params.id === chat.id ? 'text-indigo-400' : 'text-slate-500'}" />
                 <span class="truncate">{chat.title}</span>
+                {#if chat.mode && chat.mode !== 'agent'}
+                  <span class="px-1 py-0.5 rounded text-[8px] font-bold border shrink-0 capitalize
+                    {chat.mode === 'plan' 
+                      ? 'border-sky-500/30 text-sky-400 bg-sky-950/20' 
+                      : 'border-emerald-500/30 text-emerald-400 bg-emerald-950/20'
+                    }"
+                  >
+                    {chat.mode}
+                  </span>
+                {/if}
               </div>
               <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 shrink-0">
                 <button

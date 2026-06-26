@@ -12,7 +12,7 @@
   let { children } = $props();
 
   let isSidebarOpen = $state(true);
-  let chats = $state<Array<{ id: string; title: string; created_at: number }>>([]);
+  let chats = $state<Array<{ id: string; title: string; created_at: number; mode: string }>>([]);
 
   onMount(async () => {
     // Load sidebar state

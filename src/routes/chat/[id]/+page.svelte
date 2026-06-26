@@ -44,6 +44,9 @@
   let editingMessageId = $state<string | null>(null);
   let editingMessageText = $state<string>('');
 
+  // Mode actif de discussion
+  let currentMode = $state<'agent' | 'plan' | 'ask'>('agent');
+
   // Nom abrégé du dossier de travail (CWD)
   let folderName = $derived(cwd ? (cwd.split(/[/\\]/).pop() || cwd) : 'Dossier');
   
@@ -148,11 +151,15 @@
 
     // 1. Charger le titre de la discussion
     let foundTitle = 'Discussion';
+    let foundMode = 'agent';
     if (window.talosAPI) {
       try {
         const chats = await window.talosAPI.getChats();
         const chat = chats.find(c => c.id === id);
-        if (chat) foundTitle = chat.title;
+        if (chat) {
+          foundTitle = chat.title;
+          foundMode = chat.mode || 'agent';
+        }
       } catch (err) {
         console.error(err);
       }
@@ -161,10 +168,14 @@
       if (saved) {
         const chats = JSON.parse(saved);
         const chat = chats.find((c: any) => c.id === id);
-        if (chat) foundTitle = chat.title;
+        if (chat) {
+          foundTitle = chat.title;
+          foundMode = chat.mode || 'agent';
+        }
       }
     }
     chatTitle = foundTitle;
+    currentMode = foundMode as any;
 
     // 2. Charger les messages réels de l'historique
     if (window.talosAPI) {
@@ -712,6 +723,28 @@
     await loadConversationData(chatId);
   }
 
+  async function selectMode(mode: 'agent' | 'plan' | 'ask') {
+    if (currentMode === mode) return;
+    currentMode = mode;
+    
+    if (window.talosAPI) {
+      try {
+        await window.talosAPI.updateChatMode(chatId, mode);
+        window.dispatchEvent(new CustomEvent('talos:chat-created'));
+      } catch (err) {
+        console.error('Failed to update chat mode:', err);
+      }
+    } else {
+      const savedChats = JSON.parse(localStorage.getItem('talos_chats') || '[]');
+      const index = savedChats.findIndex((c: any) => c.id === chatId);
+      if (index !== -1) {
+        savedChats[index].mode = mode;
+        localStorage.setItem('talos_chats', JSON.stringify(savedChats));
+        window.dispatchEvent(new CustomEvent('talos:chat-created'));
+      }
+    }
+  }
+
   function handleWindowKeydown(e: KeyboardEvent) {
     if (isThinking && e.ctrlKey && e.key.toLowerCase() === 'c') {
       const selection = window.getSelection()?.toString();
@@ -781,6 +814,33 @@
 
 <div class="flex flex-col h-full w-full bg-transparent overflow-hidden">
   
+  <!-- Top bar of the discussion: chat title & Mode Selector segmented tabs -->
+  <div class="h-12 border-b border-slate-900/60 bg-[#070b15]/65 backdrop-blur-md px-8 flex items-center justify-between shrink-0 select-none z-10">
+    <div class="flex items-center gap-3">
+      <h2 class="text-xs font-bold tracking-wide text-slate-300">{chatTitle}</h2>
+    </div>
+    
+    <!-- Mode Switcher segment controls -->
+    <div class="flex bg-slate-950/80 p-0.5 border border-slate-900 rounded-lg text-[10px] font-bold">
+      {#each ['agent', 'plan', 'ask'] as m}
+        <button
+          onclick={() => selectMode(m as any)}
+          class="px-3 py-1 rounded-md transition-all cursor-pointer capitalize
+            {currentMode === m 
+              ? m === 'agent' 
+                ? 'bg-indigo-600/10 text-indigo-400 border border-indigo-500/25' 
+                : m === 'plan' 
+                  ? 'bg-sky-600/10 text-sky-400 border border-sky-500/25' 
+                  : 'bg-emerald-600/10 text-emerald-400 border border-emerald-500/25'
+              : 'text-slate-500 hover:text-slate-350 border border-transparent hover:bg-slate-900/40'
+            }"
+        >
+          {m}
+        </button>
+      {/each}
+    </div>
+  </div>
+
   <!-- Messages List Feed (Takes all upper space, padded nicely so text isn't against screen edges) -->
   <div 
     bind:this={chatContainer}
@@ -937,7 +997,13 @@
 
     <div class="flex flex-col gap-3">
       <!-- Message input card (Borderless text, round send button inside) -->
-      <div class="flex items-center gap-3 w-full bg-slate-900/20 border border-slate-900 focus-within:border-indigo-500/40 rounded-2xl px-4 py-2 transition-all relative">
+      <div class="flex items-center gap-3 w-full bg-slate-900/20 border border-slate-900 
+        {currentMode === 'agent' 
+          ? 'focus-within:border-indigo-500/40' 
+          : currentMode === 'plan' 
+            ? 'focus-within:border-sky-500/40' 
+            : 'focus-within:border-emerald-500/40'
+        } rounded-2xl px-4 py-2 transition-all relative">
 
         <!-- Slash command autocomplete dropdown -->
         {#if showSuggestions && filteredSuggestions.length > 0}
@@ -1011,7 +1077,13 @@
             type="button"
             onclick={sendMessage}
             disabled={!inputMessage.trim() && attachedFiles.length === 0}
-            class="p-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed no-drag shrink-0 flex items-center justify-center shadow-md hover:scale-105"
+            class="p-2.5 text-white rounded-full transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed no-drag shrink-0 flex items-center justify-center shadow-md hover:scale-105
+              {currentMode === 'agent' 
+                ? 'bg-indigo-600 hover:bg-indigo-500' 
+                : currentMode === 'plan' 
+                  ? 'bg-sky-600 hover:bg-sky-500' 
+                  : 'bg-emerald-600 hover:bg-emerald-500'
+              }"
             title="Envoyer le message"
           >
             <Send size={14} />
