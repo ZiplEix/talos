@@ -5,6 +5,14 @@ import { defineConfig } from 'vite';
 import electron from 'vite-plugin-electron';
 
 export default defineConfig({
+	server: {
+		watch: {
+			// Ignore the .talos symlink (-> ~/.talos) which contains the JSON database.
+			// Without this, every addMessage() write during AI streaming triggers Vite HMR,
+			// which reloads the page component mid-stream and destroys IPC listeners.
+			ignored: ['**/.talos/**']
+		}
+	},
 	plugins: [
 		tailwindcss(),
 		sveltekit({

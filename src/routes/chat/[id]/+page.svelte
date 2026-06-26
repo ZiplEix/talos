@@ -67,7 +67,22 @@
   $effect(() => {
     if (chatId) {
       clearStreamSubscriptions();
-      loadConversationData(chatId);
+      loadConversationData(chatId).then(() => {
+        // Après HMR : si un stream est encore en cours pour ce chat, se réabonner
+        const activeStream = sessionStorage.getItem('talos_active_stream');
+        if (activeStream) {
+          try {
+            const streamInfo = JSON.parse(activeStream);
+            if (streamInfo.chatId === chatId) {
+              console.log('[HMR-RECOVERY] Re-subscribing to active stream for chat:', chatId);
+              thinkingStatus = 'writing';
+              subscribeToStream(chatId);
+            }
+          } catch (e) {
+            sessionStorage.removeItem('talos_active_stream');
+          }
+        }
+      });
     }
   });
 
@@ -222,17 +237,92 @@
     attachedFiles = attachedFiles.filter((_, i) => i !== index);
   }
 
+  // ── Stream IPC subscription (réutilisable après HMR) ──────────────────
+  function subscribeToStream(targetChatId: string) {
+    clearStreamSubscriptions();
+    if (!window.talosAPI) return;
+
+    const unsubChunk = window.talosAPI.onChatStreamChunk((data: any) => {
+      if (data.chatId === targetChatId) {
+        const idx = messages.findIndex(m => m.id === data.requestId);
+        if (idx !== -1) {
+          messages[idx].content += data.text;
+        } else {
+          // Le placeholder n'existe pas encore (perdu lors d'un HMR) → créer le message
+          messages.push({
+            id: data.requestId,
+            role: 'assistant',
+            content: data.text
+          });
+        }
+        if (thinkingStatus === 'thinking' || thinkingStatus === 'executing') {
+          thinkingStatus = 'writing';
+        }
+        scrollToBottom();
+      }
+    });
+
+    const unsubEnd = window.talosAPI.onChatStreamEnd((data: any) => {
+      if (data.chatId === targetChatId) {
+        sessionStorage.removeItem('talos_active_stream');
+        clearStreamSubscriptions();
+        thinkingStatus = '';
+        // Recharger depuis le JSON pour s'assurer que l'état final est correct
+        loadConversationData(targetChatId);
+      }
+    });
+
+    const unsubError = window.talosAPI.onChatStreamError((data: any) => {
+      if (data.chatId === targetChatId) {
+        sessionStorage.removeItem('talos_active_stream');
+        clearStreamSubscriptions();
+        thinkingStatus = '';
+        const idx = messages.findIndex(m => m.id === data.requestId);
+        if (idx !== -1) {
+          messages[idx].content += `\n\n*(Erreur lors du streaming : ${data.error})*`;
+        }
+        scrollToBottom();
+      }
+    });
+
+    const unsubToolMessage = window.talosAPI.onChatToolMessage((data: any) => {
+      if (data.chatId === targetChatId) {
+        const idx = messages.findIndex(m => m.id === data.id);
+        if (idx === -1) {
+          // Nouveau message — on l'ajoute (même vide, ça sert de placeholder)
+          messages.push(data);
+        } else {
+          // ⚠️ RACE CONDITION : le canal onChatStreamChunk peut avoir déjà
+          // rempli ce message. Si data.content est vide, on préserve le
+          // contenu existant pour ne pas écraser ce qui a déjà été streamé.
+          if (data.content !== '') {
+            Object.assign(messages[idx], data);
+          } else if (messages[idx].content === '') {
+            // Seulement si le message est vraiment encore vide, on met à jour
+            Object.assign(messages[idx], data);
+          }
+        }
+        if (data.role === 'assistant' && data.content.startsWith('`')) {
+          thinkingStatus = 'executing';
+        }
+        scrollToBottom();
+      }
+    });
+
+    streamCleanups.push(unsubChunk, unsubEnd, unsubError, unsubToolMessage);
+  }
+
   async function sendMessage() {
     const text = inputMessage.trim();
     if (!text && attachedFiles.length === 0) return;
 
     // S'assurer qu'un modèle est sélectionné
     if (!activeModel) {
-      messages = [...messages, {
+      messages.push({
         id: `err-${Date.now()}`,
         role: 'assistant',
         content: 'Veuillez sélectionner un modèle dans les outils au bas de l\'écran avant d\'envoyer un message.'
-      }];
+      });
       await scrollToBottom();
       return;
     }
@@ -246,9 +336,9 @@
 
     const userMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
     const userMsg = { id: userMsgId, role: 'user', content: textWithFiles };
-
+    
     // Ajout à l'interface
-    messages = [...messages, userMsg];
+    messages.push(userMsg);
     
     // Sauvegarde en base
     if (window.talosAPI) {
@@ -283,94 +373,14 @@
         
         const aiMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
         const assistantMsg = { id: aiMsgId, role: 'assistant', content: '' };
-        messages = [...messages, assistantMsg];
+        messages.push(assistantMsg);
         await scrollToBottom();
 
-        // Nettoyer les abonnements précédents avant de démarrer un nouveau stream
-        clearStreamSubscriptions();
+        // Marquer le stream comme actif (survit aux HMR)
+        sessionStorage.setItem('talos_active_stream', JSON.stringify({ chatId }));
 
-        const unsubChunk = window.talosAPI.onChatStreamChunk((data) => {
-          console.log('[DEBUG] onChatStreamChunk received:', data);
-          if (data.chatId === chatId) {
-            const idx = messages.findIndex(m => m.id === data.requestId);
-            console.log('[DEBUG] findIndex for', data.requestId, 'result:', idx);
-            if (idx !== -1) {
-              messages[idx] = {
-                ...messages[idx],
-                content: messages[idx].content + data.text
-              };
-              messages = [...messages]; // Force Svelte reactivity update
-              console.log('[DEBUG] Updated message content:', messages[idx].content);
-            } else {
-              console.log('[DEBUG] Creating new message defensively for:', data.requestId);
-              messages = [...messages, {
-                id: data.requestId,
-                role: 'assistant',
-                content: data.text
-              }];
-            }
-            if (thinkingStatus === 'thinking' || thinkingStatus === 'executing') {
-              thinkingStatus = 'writing';
-            }
-            scrollToBottom();
-          }
-        });
-
-        const unsubEnd = window.talosAPI.onChatStreamEnd((data) => {
-          console.log('[DEBUG] onChatStreamEnd received:', data);
-          if (data.chatId === chatId) {
-            clearStreamSubscriptions();
-            thinkingStatus = '';
-            scrollToBottom();
-          }
-        });
-
-        const unsubError = window.talosAPI.onChatStreamError((data) => {
-          console.log('[DEBUG] onChatStreamError received:', data);
-          if (data.chatId === chatId) {
-            clearStreamSubscriptions();
-            thinkingStatus = '';
-            const idx = messages.findIndex(m => m.id === data.requestId);
-            if (idx !== -1) {
-              messages[idx] = {
-                ...messages[idx],
-                content: messages[idx].content + `\n\n*(Erreur lors du streaming : ${data.error})*`
-              };
-              messages = [...messages]; // Force Svelte reactivity update
-            }
-            scrollToBottom();
-          }
-        });
-
-        const unsubToolMessage = window.talosAPI.onChatToolMessage((data) => {
-          console.log('[DEBUG] onChatToolMessage received:', data);
-          if (data.chatId === chatId) {
-            const idx = messages.findIndex(m => m.id === data.id);
-            console.log('[DEBUG] findIndex for tool msg', data.id, 'result:', idx);
-            if (idx === -1) {
-              // Nouveau message — on l'ajoute (même vide, ça sert de placeholder)
-              messages = [...messages, data];
-            } else {
-              // ⚠️ RACE CONDITION : le canal onChatStreamChunk peut avoir déjà
-              // rempli ce message. Si data.content est vide, on préserve le
-              // contenu existant pour ne pas écraser ce qui a déjà été streamé.
-              if (data.content !== '') {
-                messages[idx] = data;
-                messages = [...messages]; // Force Svelte reactivity update
-              } else if (messages[idx].content === '') {
-                // Seulement si le message est vraiment encore vide, on met à jour
-                messages[idx] = data;
-                messages = [...messages];
-              }
-            }
-            if (data.role === 'assistant' && data.content.startsWith('`')) {
-              thinkingStatus = 'executing';
-            }
-            scrollToBottom();
-          }
-        });
-
-        streamCleanups.push(unsubChunk, unsubEnd, unsubError, unsubToolMessage);
+        // S'abonner aux événements IPC du stream
+        subscribeToStream(chatId);
 
         window.talosAPI.startChatStream(activeProviderId, activeModel, cleanMessages, chatId, aiMsgId);
       } else {
@@ -380,17 +390,18 @@
         const content = `[Simulation Fallback Browser]\nModèle sélectionné : ${activeModel}\nFournisseur : ${activeProviderId}\nDossier de travail : ${cwd}\n\nVotre message a été reçu ! Pour exécuter de vrais appels d'API, veuillez lancer l'application avec Electron et configurer un fournisseur de clés.`;
         const assistantMsg = { id: aiMsgId, role: 'assistant', content };
         
-        messages = [...messages, assistantMsg];
+        messages.push(assistantMsg);
         saveMessageToLocalStorage(chatId, assistantMsg);
         thinkingStatus = '';
         await scrollToBottom();
       }
     } catch (err: any) {
       console.error(err);
+      sessionStorage.removeItem('talos_active_stream');
       thinkingStatus = '';
       const aiMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
       const errMsg = { id: aiMsgId, role: 'assistant', content: `Désolé, une erreur s'est produite lors de l'appel d'API : ${err.message || err}` };
-      messages = [...messages, errMsg];
+      messages.push(errMsg);
       await scrollToBottom();
     }
   }
