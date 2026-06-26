@@ -1,13 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Sparkles, Save, FileText, CheckCircle2, AlertCircle, RotateCcw, Code, ChevronDown, ChevronRight, Variable, Info, List, ToggleRight, Braces, Layers } from 'lucide-svelte';
+  import { Sparkles, Save, FileText, CheckCircle2, AlertCircle, RotateCcw, HelpCircle, X, Braces, ToggleRight, Layers, Variable, ChevronDown, ChevronRight, Info, List, ArrowRight } from 'lucide-svelte';
 
   let prompts = $state<string[]>([]);
   let selectedPrompt = $state<string | null>(null);
   let promptContent = $state('');
   let isLoading = $state(true);
   let isSaving = $state(false);
-  let showVariables = $state(true);
+  let showHelp = $state(false);
   let notification = $state<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Template variables state
@@ -22,8 +22,7 @@
   let templateSyntax = $state<Array<{ syntax: string; description: string }>>([]);
   let expandedVars = $state<Set<string>>(new Set());
 
-  type VariableIconMap = typeof Variable;
-  const TYPE_ICONS: Record<string, VariableIconMap> = {
+  const TYPE_ICONS: Record<string, typeof Braces> = {
     string: Braces,
     boolean: ToggleRight,
     array: Layers
@@ -49,7 +48,6 @@
         console.error('Failed to load template variables:', err);
       }
     } else {
-      // Fallback mock data for browser dev
       templateVariables = [
         { name: 'currentCwd', description: 'Le dossier de travail actuel (Current Working Directory)', type: 'string', usage: '{{currentCwd}}' },
         { name: 'chatFolder', description: 'Le dossier des artifacts du chat en cours', type: 'string', usage: '{{chatFolder}}' },
@@ -75,16 +73,13 @@
   }
 
   function toggleExpand(name: string) {
-    if (expandedVars.has(name)) {
-      expandedVars.delete(name);
+    const next = new Set(expandedVars);
+    if (next.has(name)) {
+      next.delete(name);
     } else {
-      expandedVars.add(name);
+      next.add(name);
     }
-    expandedVars = new Set(expandedVars);
-  }
-
-  function insertAtCursor(text: string) {
-    promptContent += text;
+    expandedVars = next;
   }
 
   async function loadPrompts() {
@@ -99,7 +94,6 @@
         console.error('Failed to load prompts:', err);
       }
     } else {
-      // Fallback local storage mock prompts for browser testing
       prompts = ['system.md', 'agent.md', 'plan.md', 'ask.md'];
       await selectPrompt(prompts[0]);
     }
@@ -155,7 +149,6 @@
         showNotification({ type: 'error', message: `Erreur lors de la réinitialisation : ${err.message}` });
       }
     } else {
-      // Mock reset for browser testing
       promptContent = `# Mode: ${selectedPrompt.replace('.md', '').toUpperCase()}\n\nContenu par défaut restauré en simulation.`;
       localStorage.setItem(`talos_mock_prompt_${selectedPrompt}`, promptContent);
       showNotification({ type: 'success', message: `Prompt '${selectedPrompt}' réinitialisé en simulation.` });
@@ -173,7 +166,21 @@
       }, 3000);
     }
   }
+
+  function handleOverlayClick(e: MouseEvent) {
+    if (e.target === e.currentTarget) {
+      showHelp = false;
+    }
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      showHelp = false;
+    }
+  }
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="grid grid-cols-4 gap-6 w-full h-[550px]">
   <!-- Left list: available prompts -->
@@ -203,175 +210,241 @@
     {/if}
   </div>
 
-  <!-- Right area: Editor + Variables panel -->
-  <div class="col-span-3 flex gap-6 h-full">
-    <!-- Editor column -->
-    <div class="flex flex-col h-full bg-[#070b15]/60 border border-slate-900/80 rounded-2xl p-6 flex-1 min-w-0 relative">
-      {#if selectedPrompt}
-        <div class="flex items-center justify-between mb-4 select-none shrink-0">
-          <div>
-            <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
-              Édition de <span class="text-indigo-400 font-mono">{selectedPrompt}</span>
-            </h3>
-            <p class="text-[10px] text-slate-500 mt-0.5">Ces templates régissent le comportement de Talos dans ses différents modes.</p>
-          </div>
-          
-          <div class="flex items-center gap-2">
-            <button
-              onclick={() => showVariables = !showVariables}
-              class="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 border hover:bg-slate-800/70 text-slate-450 hover:text-sky-400 disabled:opacity-50 font-bold text-xs rounded-xl transition-all cursor-pointer {showVariables ? 'text-sky-400 border-sky-800/40' : 'border-slate-800/80'}"
-              title="Afficher/Masquer les variables disponibles"
-            >
-              <Code size={13} />
-              Variables
-            </button>
-
-            <button
-              onclick={resetPrompt}
-              disabled={isSaving}
-              class="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 border border-slate-800/80 hover:bg-slate-800/70 text-slate-450 hover:text-slate-200 disabled:opacity-50 font-bold text-xs rounded-xl transition-all cursor-pointer"
-              title="Restaurer le template par défaut"
-            >
-              <RotateCcw size={13} />
-              Réinitialiser
-            </button>
-
-            <button
-              onclick={savePrompt}
-              disabled={isSaving}
-              class="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-800 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer"
-            >
-              {#if isSaving}
-                <div class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-              {:else}
-                <Save size={14} />
-              {/if}
-              Enregistrer
-            </button>
-          </div>
+  <!-- Right area: Editor -->
+  <div class="col-span-3 flex flex-col h-full bg-[#070b15]/60 border border-slate-900/80 rounded-2xl p-6 relative">
+    {#if selectedPrompt}
+      <div class="flex items-center justify-between mb-4 select-none shrink-0">
+        <div>
+          <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+            Édition de <span class="text-indigo-400 font-mono">{selectedPrompt}</span>
+          </h3>
+          <p class="text-[10px] text-slate-500 mt-0.5">Ces templates régissent le comportement de Talos dans ses différents modes.</p>
         </div>
-
-        <!-- Editor textarea -->
-        <div class="flex-1 min-h-0 relative">
-          <textarea
-            bind:value={promptContent}
-            class="w-full h-full bg-slate-950/80 text-slate-200 border border-slate-900/80 focus:border-indigo-500/30 focus:outline-none rounded-xl p-4 font-mono text-xs leading-relaxed resize-none scrollbar-thin scrollbar-thumb-slate-900 scrollbar-track-transparent focus:ring-1 focus:ring-indigo-500/25"
-            placeholder="# Écrivez votre prompt ici..."
-          ></textarea>
-        </div>
-
-        <!-- Floating notification -->
-        {#if notification}
-          <div class="absolute bottom-4 left-6 right-6 flex items-center gap-2 px-4 py-3 rounded-xl border select-none animate-in fade-in slide-in-from-bottom-2 duration-200
-            {notification.type === 'success' 
-              ? 'bg-emerald-600/10 border-emerald-500/20 text-emerald-400' 
-              : 'bg-rose-600/10 border-rose-500/20 text-rose-400'
-            }"
+        
+        <div class="flex items-center gap-2">
+          <button
+            onclick={() => showHelp = true}
+            class="flex items-center gap-1.5 px-3 py-2 bg-slate-900 border border-slate-800/80 hover:bg-slate-800/70 text-slate-450 hover:text-sky-400 font-bold text-xs rounded-xl transition-all cursor-pointer"
+            title="Aide sur le système de templates"
           >
-            {#if notification.type === 'success'}
-              <CheckCircle2 size={16} class="shrink-0" />
+            <HelpCircle size={14} />
+            Aide
+          </button>
+
+          <button
+            onclick={resetPrompt}
+            disabled={isSaving}
+            class="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 border border-slate-800/80 hover:bg-slate-800/70 text-slate-450 hover:text-slate-200 disabled:opacity-50 font-bold text-xs rounded-xl transition-all cursor-pointer"
+            title="Restaurer le template par défaut"
+          >
+            <RotateCcw size={13} />
+            Réinitialiser
+          </button>
+
+          <button
+            onclick={savePrompt}
+            disabled={isSaving}
+            class="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-800 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer"
+          >
+            {#if isSaving}
+              <div class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
             {:else}
-              <AlertCircle size={16} class="shrink-0" />
+              <Save size={14} />
             {/if}
-            <span class="text-xs font-semibold leading-none">{notification.message}</span>
-          </div>
-        {/if}
-      {:else}
-        <div class="flex-1 flex flex-col items-center justify-center text-center text-slate-500 space-y-2">
-          <div class="p-3 bg-slate-900/30 rounded-full border border-slate-900/60 text-slate-400">
-            <Sparkles size={24} />
-          </div>
-          <div class="max-w-xs">
-            <p class="text-xs font-bold text-slate-350">Aucun prompt sélectionné</p>
-            <p class="text-[10px] text-slate-500 mt-1">Sélectionnez un fichier de prompt à gauche pour commencer son édition.</p>
-          </div>
+            Enregistrer
+          </button>
+        </div>
+      </div>
+
+      <!-- Editor textarea -->
+      <div class="flex-1 min-h-0 relative">
+        <textarea
+          bind:value={promptContent}
+          class="w-full h-full bg-slate-950/80 text-slate-200 border border-slate-900/80 focus:border-indigo-500/30 focus:outline-none rounded-xl p-4 font-mono text-xs leading-relaxed resize-none scrollbar-thin scrollbar-thumb-slate-900 scrollbar-track-transparent focus:ring-1 focus:ring-indigo-500/25"
+          placeholder="# Écrivez votre prompt ici..."
+        ></textarea>
+      </div>
+
+      <!-- Floating notification -->
+      {#if notification}
+        <div class="absolute bottom-4 left-6 right-6 flex items-center gap-2 px-4 py-3 rounded-xl border select-none animate-in fade-in slide-in-from-bottom-2 duration-200
+          {notification.type === 'success' 
+            ? 'bg-emerald-600/10 border-emerald-500/20 text-emerald-400' 
+            : 'bg-rose-600/10 border-rose-500/20 text-rose-400'
+          }"
+        >
+          {#if notification.type === 'success'}
+            <CheckCircle2 size={16} class="shrink-0" />
+          {:else}
+            <AlertCircle size={16} class="shrink-0" />
+          {/if}
+          <span class="text-xs font-semibold leading-none">{notification.message}</span>
         </div>
       {/if}
-    </div>
-
-    <!-- Variables panel (collapsible) -->
-    {#if showVariables}
-      <div class="w-64 shrink-0 bg-[#070b15]/60 border border-slate-900/80 rounded-2xl p-4 flex flex-col gap-3 overflow-y-auto select-none">
-        <div class="flex items-center gap-2 px-1">
-          <Variable size={14} class="text-sky-400" />
-          <h3 class="text-xs font-bold text-slate-300 tracking-wider uppercase">Variables</h3>
+    {:else}
+      <div class="flex-1 flex flex-col items-center justify-center text-center text-slate-500 space-y-2">
+        <div class="p-3 bg-slate-900/30 rounded-full border border-slate-900/60 text-slate-400">
+          <Sparkles size={24} />
         </div>
-
-        <!-- Syntax reference -->
-        <div class="bg-slate-950/50 border border-slate-900/80 rounded-xl p-3 space-y-1.5">
-          <h4 class="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-            <Info size={11} />
-            Syntaxe
-          </h4>
-          <div class="space-y-1">
-            {#each templateSyntax as s}
-              <div class="flex items-start gap-2">
-                <code class="text-[10px] font-mono text-amber-300 bg-amber-950/30 px-1.5 py-0.5 rounded-md shrink-0 leading-relaxed">{s.syntax}</code>
-                <span class="text-[10px] text-slate-400 leading-relaxed">{s.description}</span>
-              </div>
-            {/each}
-          </div>
-        </div>
-
-        <!-- Variables list -->
-        <div class="space-y-1">
-          <h4 class="text-[10px] font-bold text-slate-500 uppercase tracking-wider px-1 flex items-center gap-1.5">
-            <List size={11} />
-            Disponibles
-          </h4>
-          
-          {#each templateVariables as v}
-            <div class="bg-slate-950/30 border border-slate-900/60 rounded-xl overflow-hidden">
-              <button
-                onclick={() => toggleExpand(v.name)}
-                class="w-full flex items-center gap-2 px-3 py-2 text-xs transition-all hover:bg-slate-900/40 cursor-pointer text-left"
-              >
-                {#if v.children}
-                  {#if expandedVars.has(v.name)}
-                    <ChevronDown size={12} class="text-slate-500 shrink-0" />
-                  {:else}
-                    <ChevronRight size={12} class="text-slate-500 shrink-0" />
-                  {/if}
-                {:else}
-                  <span class="w-3 shrink-0"></span>
-                {/if}
-
-                {#if TYPE_ICONS[v.type]}
-                  {@const Icon = TYPE_ICONS[v.type]}
-                  <Icon size={12} class={`${TYPE_COLORS[v.type] || 'text-slate-400'} shrink-0`} />
-                {/if}
-
-                <span class="font-bold text-slate-200 truncate">{v.name}</span>
-                <span class="text-[10px] uppercase tracking-wider text-slate-600 ml-auto">{v.type}</span>
-              </button>
-
-              <div class="px-3 pb-2">
-                <p class="text-[10px] text-slate-400 leading-relaxed mb-1.5">{v.description}</p>
-                <button
-                  onclick={() => insertAtCursor(v.usage)}
-                  class="group flex items-center gap-1 px-2 py-1 bg-slate-900/60 border border-slate-800/60 hover:border-sky-800/40 hover:bg-sky-950/20 rounded-lg transition-all cursor-pointer"
-                  title="Insérer dans l'éditeur"
-                >
-                  <code class="text-[10px] font-mono text-amber-300/80 group-hover:text-amber-300 transition-colors">{v.usage}</code>
-                  <span class="text-[9px] text-slate-500 group-hover:text-sky-400 ml-auto">insérer</span>
-                </button>
-
-                <!-- Children (for arrays/objects) -->
-                {#if v.children && expandedVars.has(v.name)}
-                  <div class="mt-2 space-y-1 pl-2 border-l border-slate-800/60">
-                    {#each v.children as child}
-                      <div class="flex items-start gap-2 py-1">
-                        <span class="text-[10px] font-bold text-slate-300 shrink-0 w-16 truncate">{child.name}</span>
-                        <span class="text-[10px] text-slate-500 leading-relaxed">{child.description}</span>
-                      </div>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
-            </div>
-          {/each}
+        <div class="max-w-xs">
+          <p class="text-xs font-bold text-slate-350">Aucun prompt sélectionné</p>
+          <p class="text-[10px] text-slate-500 mt-1">Sélectionnez un fichier de prompt à gauche pour commencer son édition.</p>
         </div>
       </div>
     {/if}
   </div>
 </div>
+
+<!-- Help Modal -->
+{#if showHelp}
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+    onclick={handleOverlayClick}
+    onkeydown={handleKeydown}
+    role="dialog"
+    aria-modal="true"
+    tabindex="-1"
+    aria-label="Aide sur le système de templates"
+  >
+    <div class="relative w-full max-w-xl max-h-[80vh] bg-[#0a0f1e] border border-slate-800/80 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      
+      <!-- Header -->
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-800/60 select-none">
+        <div class="flex items-center gap-3">
+          <div class="p-2 rounded-lg bg-indigo-600/10 border border-indigo-500/20">
+            <Variable size={18} class="text-indigo-400" />
+          </div>
+          <div>
+            <h2 class="text-sm font-bold text-slate-100">Système de templates</h2>
+            <p class="text-[11px] text-slate-500 mt-0.5">Comprenez comment utiliser les variables dynamiques dans vos prompts</p>
+          </div>
+        </div>
+        <button
+          onclick={() => showHelp = false}
+          class="p-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-900/60 transition-all cursor-pointer"
+          title="Fermer"
+        >
+          <X size={16} />
+        </button>
+      </div>
+
+      <!-- Body -->
+      <div class="px-6 py-5 overflow-y-auto max-h-[calc(80vh-70px)] space-y-6">
+
+        <!-- How it works -->
+        <section>
+          <h3 class="text-xs font-bold text-indigo-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+            <Info size={13} />
+            Fonctionnement
+          </h3>
+          <div class="bg-slate-950/50 border border-slate-900/60 rounded-xl p-4 space-y-2.5">
+            <p class="text-[13px] text-slate-300 leading-relaxed">
+              Les prompts de Talos utilisent un système de templates simple. 
+              Avant d'envoyer le prompt à l'IA, les variables sont automatiquement 
+              remplacées par les valeurs réelles du contexte.
+            </p>
+            <div class="bg-slate-950/80 border border-slate-900/60 rounded-lg p-3 font-mono text-xs space-y-1.5">
+              <div class="flex items-center gap-2">
+                <code class="text-amber-300">Vous travaillez dans {'{'}{'{'}currentCwd{'}'}{'}'}</code>
+                <ArrowRight size={12} class="text-slate-600" />
+                <code class="text-emerald-400">Vous travaillez dans /Users/me/project</code>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Syntax reference -->
+        <section>
+          <h3 class="text-xs font-bold text-indigo-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+            <Braces size={13} />
+            Syntaxes disponibles
+          </h3>
+          <div class="space-y-2">
+            {#each templateSyntax as s}
+              <div class="flex items-start gap-3 bg-slate-950/30 border border-slate-900/60 rounded-xl p-3">
+                <code class="text-[12px] font-mono text-amber-300 bg-amber-950/20 px-2 py-1 rounded-lg shrink-0 leading-relaxed">{s.syntax}</code>
+                <p class="text-[13px] text-slate-300 leading-relaxed">{s.description}</p>
+              </div>
+            {/each}
+          </div>
+        </section>
+
+        <!-- Available variables -->
+        <section>
+          <h3 class="text-xs font-bold text-indigo-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+            <List size={13} />
+            Variables disponibles
+          </h3>
+          <div class="space-y-2">
+            {#each templateVariables as v}
+              <div class="bg-slate-950/30 border border-slate-900/60 rounded-xl overflow-hidden">
+                <button
+                  onclick={() => toggleExpand(v.name)}
+                  class="w-full flex items-center gap-3 px-4 py-3 transition-all hover:bg-slate-900/40 cursor-pointer text-left"
+                >
+                  {#if v.children}
+                    {#if expandedVars.has(v.name)}
+                      <ChevronDown size={14} class="text-slate-500 shrink-0" />
+                    {:else}
+                      <ChevronRight size={14} class="text-slate-500 shrink-0" />
+                    {/if}
+                  {:else}
+                    <span class="w-3.5 shrink-0"></span>
+                  {/if}
+
+                  {#if TYPE_ICONS[v.type]}
+                    {@const Icon = TYPE_ICONS[v.type]}
+                    <Icon size={14} class={`${TYPE_COLORS[v.type] || 'text-slate-400'} shrink-0`} />
+                  {/if}
+
+                  <div class="flex-1 min-w-0">
+                    <span class="text-sm font-bold text-slate-200">{v.name}</span>
+                    <p class="text-[12px] text-slate-400 leading-relaxed mt-0.5">{v.description}</p>
+                  </div>
+
+                  <span class="text-[10px] uppercase tracking-wider text-slate-600 font-mono shrink-0">{v.type}</span>
+                </button>
+
+                {#if expandedVars.has(v.name) && v.children}
+                  <div class="px-4 pb-3 pl-12 space-y-1">
+                    {#each v.children as child}
+                      <div class="flex items-center gap-3 py-1.5 px-3 bg-slate-950/40 border border-slate-900/50 rounded-lg">
+                        <code class="text-[12px] font-mono text-amber-300 shrink-0">{child.name}</code>
+                        <span class="text-[12px] text-slate-400">{child.description}</span>
+                        <span class="text-[10px] text-slate-600 ml-auto font-mono">{child.type}</span>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        </section>
+
+        <!-- Example -->
+        <section>
+          <h3 class="text-xs font-bold text-indigo-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+            <FileText size={13} />
+            Exemple complet
+          </h3>
+          <div class="bg-slate-950/50 border border-slate-900/60 rounded-xl overflow-hidden">
+            <div class="px-4 py-3 bg-slate-950/80 border-b border-slate-900/60">
+              <p class="text-[11px] text-slate-500 font-medium">system.md</p>
+            </div>
+            <pre class="p-4 text-[12px] font-mono text-slate-300 leading-relaxed overflow-x-auto"><span class="text-slate-500">#</span> Vous êtes Talos.
+<span class="text-slate-500">#</span> Dossier de travail : <span class="text-amber-300">{'{'}{'{currentCwd}{'}'}{'}'}</span>
+<span class="text-slate-500">#</span> Dossier artifacts : <span class="text-amber-300">{'{'}{'{chatFolder}{'}'}{'}'}</span>
+
+<span class="text-indigo-400">{'{'}{'{#if hasTools}{'}'}{'}'}</span>
+Vous avez accès aux outils suivants :
+<span class="text-indigo-400">{'{'}{'{#each tools}{'}'}{'}'}</span>
+- <span class="text-amber-300">{'{'}{'{name}{'}'}{'}'}</span> : <span class="text-amber-300">{'{'}{'{description}{'}'}{'}'}</span>
+<span class="text-indigo-400">{'{'}{'{/each}{'}'}{'}'}</span>
+<span class="text-indigo-400">{'{'}{'{/if}{'}'}{'}'}</span></pre>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+{/if}

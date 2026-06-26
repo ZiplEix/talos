@@ -134,7 +134,7 @@
   <title>Talos AI Platform</title>
 </svelte:head>
 
-<div class="flex h-screen w-screen bg-[#070b15] text-slate-100 overflow-hidden font-sans select-none animate-fade-in">
+<div class="flex h-screen w-screen bg-[#070b15] text-slate-100 overflow-hidden font-sans animate-fade-in">
   <!-- Sidebar Component -->
   <Sidebar
     bind:isSidebarOpen

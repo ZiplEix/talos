@@ -616,6 +616,72 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error('Erreur lors de l\'initialisation de la base de données :', err);
   }
+
+  // Create standard menu for copy-paste on macOS and general application shortcuts
+  const template: any[] = [
+    ...(process.platform === 'darwin' ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about', label: 'À propos' },
+        { type: 'separator' },
+        { role: 'services', label: 'Services' },
+        { type: 'separator' },
+        { role: 'hide', label: 'Masquer' },
+        { role: 'hideOthers', label: 'Masquer les autres' },
+        { role: 'unhide', label: 'Tout afficher' },
+        { type: 'separator' },
+        { role: 'quit', label: 'Quitter' }
+      ]
+    }] : []),
+    {
+      label: 'Édition',
+      submenu: [
+        { role: 'undo', label: 'Annuler' },
+        { role: 'redo', label: 'Rétablir' },
+        { type: 'separator' },
+        { role: 'cut', label: 'Couper' },
+        { role: 'copy', label: 'Copier' },
+        { role: 'paste', label: 'Coller' },
+        ...(process.platform === 'darwin' ? [
+          { role: 'selectAll', label: 'Tout sélectionner' }
+        ] : [
+          { type: 'separator' },
+          { role: 'selectAll', label: 'Tout sélectionner' }
+        ])
+      ]
+    },
+    {
+      label: 'Présentation',
+      submenu: [
+        { role: 'reload', label: 'Recharger' },
+        { role: 'forceReload', label: 'Forcer le rechargement' },
+        { role: 'toggleDevTools', label: 'Outils de développement' },
+        { type: 'separator' },
+        { role: 'resetZoom', label: 'Taille réelle' },
+        { role: 'zoomIn', label: 'Zoom avant' },
+        { role: 'zoomOut', label: 'Zoom arrière' },
+        { type: 'separator' },
+        { role: 'togglefullscreen', label: 'Plein écran' }
+      ]
+    },
+    {
+      label: 'Fenêtre',
+      submenu: [
+        { role: 'minimize', label: 'Placer dans le Dock' },
+        { role: 'zoom', label: 'Zoom' },
+        ...(process.platform === 'darwin' ? [
+          { type: 'separator' },
+          { role: 'front', label: 'Tout ramener au premier plan' }
+        ] : [
+          { role: 'close', label: 'Fermer' }
+        ])
+      ]
+    }
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+
   createWindow();
 });
 
