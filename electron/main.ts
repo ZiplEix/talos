@@ -2,6 +2,8 @@ import { app, BrowserWindow, ipcMain, dialog, Menu, MenuItem } from 'electron';
 import { OpenAI } from 'openai';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fsPromises from 'fs/promises';
+import { existsSync } from 'fs';
 import { initDb, getChats, createChat, deleteChat, renameChat, updateChatMode, getChatMode, getProviders, saveProvider, deleteProvider, getModels, addModel, deleteModel, getMessages, addMessage, saveMessages, getSetting, setSetting, getDbPath } from './db';
 import { getOpenAITools, getOpenAIToolsForMode, executeTool, getToolParamValue } from './tools';
 import { getSystemPrompt } from './prompts';
@@ -147,6 +149,45 @@ ipcMain.handle('settings:set', async (_, key: string, value: string) => {
 // Handler pour récupérer le chemin de la base de données
 ipcMain.handle('db:path', async () => {
   return getDbPath();
+});
+
+// Handlers pour la gestion des prompts
+ipcMain.handle('prompts:list', async () => {
+  try {
+    const promptsPath = path.join(getDbPath(), 'prompts');
+    if (!existsSync(promptsPath)) {
+      return [];
+    }
+    const files = await fsPromises.readdir(promptsPath);
+    return files.filter(f => f.endsWith('.md'));
+  } catch (error) {
+    console.error('Failed to list prompts:', error);
+    return [];
+  }
+});
+
+ipcMain.handle('prompts:read', async (_event, name: string) => {
+  try {
+    const filePath = path.join(getDbPath(), 'prompts', name);
+    if (!existsSync(filePath)) {
+      throw new Error(`File ${name} not found`);
+    }
+    return await fsPromises.readFile(filePath, 'utf-8');
+  } catch (error) {
+    console.error(`Failed to read prompt ${name}:`, error);
+    throw error;
+  }
+});
+
+ipcMain.handle('prompts:save', async (_event, name: string, content: string) => {
+  try {
+    const filePath = path.join(getDbPath(), 'prompts', name);
+    await fsPromises.writeFile(filePath, content, 'utf-8');
+    return true;
+  } catch (error) {
+    console.error(`Failed to save prompt ${name}:`, error);
+    throw error;
+  }
 });
 
 // Handlers pour le dossier de travail actuel (CWD)

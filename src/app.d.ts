@@ -42,6 +42,9 @@ declare global {
 			onChatStreamEnd: (callback: (data: { chatId: string; requestId: string }) => void) => () => void;
 			onChatStreamError: (callback: (data: { chatId: string; requestId: string; error: string }) => void) => () => void;
 			onChatToolMessage: (callback: (data: { id: string; chatId: string; role: string; content: string }) => void) => () => void;
+			getPrompts: () => Promise<string[]>;
+			readPrompt: (name: string) => Promise<string>;
+			savePrompt: (name: string, content: string) => Promise<boolean>;
 		};
 	}
 }
