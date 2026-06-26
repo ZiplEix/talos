@@ -57,6 +57,23 @@
   let textareaElement = $state<HTMLTextAreaElement | null>(null);
   let editAreaElement = $state<HTMLTextAreaElement | null>(null);
 
+  // State pour les demandes de sécurité en attente
+  let pendingPermission = $state<{
+    chatId: string;
+    type: 'bash' | 'file_access';
+    toolName: string;
+    command?: string;
+    path?: string;
+    actionDescription: string;
+  } | null>(null);
+
+  function handlePermission(approved: boolean) {
+    if (window.talosAPI) {
+      window.talosAPI.respondSecurityPermission(approved);
+    }
+    pendingPermission = null;
+  }
+
   // Auto-resize the input textarea height based on content
   $effect(() => {
     const _val = inputMessage;
@@ -88,6 +105,7 @@
   // Surveille le changement de chatId pour recharger la conversation
   $effect(() => {
     if (chatId) {
+      pendingPermission = null;
       clearStreamSubscriptions();
       loadConversationData(chatId).then(() => {
         // Après HMR : si un stream est encore en cours pour ce chat, se réabonner
@@ -120,8 +138,20 @@
     };
 
     window.addEventListener('talos:chat-renamed', handleRenameEvent);
+
+    let unsubSecurity: (() => void) | null = null;
+    if (window.talosAPI) {
+      unsubSecurity = window.talosAPI.onSecurityRequestPermission((data) => {
+        if (data.chatId === chatId) {
+          pendingPermission = data;
+          tick().then(scrollToBottom);
+        }
+      });
+    }
+
     return () => {
       window.removeEventListener('talos:chat-renamed', handleRenameEvent);
+      if (unsubSecurity) unsubSecurity();
     };
   });
 
@@ -1092,6 +1122,61 @@
       <div class="flex justify-start text-xs text-slate-400 font-mono py-1 items-center gap-1.5">
         <span class="inline-block w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping"></span>
         <span class="animate-pulse">talos exécute les outils...</span>
+      </div>
+    {/if}
+
+    {#if pendingPermission}
+      <div class="border border-amber-500/25 bg-amber-950/10 rounded-2xl p-5 space-y-4 max-w-2xl animate-in fade-in slide-in-from-bottom-2 duration-300 relative overflow-hidden backdrop-blur-sm shadow-lg z-20">
+        <!-- Accent line decoration -->
+        <div class="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-amber-500 to-orange-500"></div>
+        
+        <div class="flex items-start gap-3">
+          <div class="p-2 bg-amber-500/10 border border-amber-500/25 text-amber-400 rounded-xl">
+            <span class="text-sm">🛡️</span>
+          </div>
+          <div class="flex-1 space-y-1">
+            <h4 class="text-sm font-bold text-slate-200">Autorisation de Sécurité Requise</h4>
+            <p class="text-xs text-slate-400 leading-relaxed">
+              L'agent demande à effectuer une action sensible en dehors de l'espace de travail standard ou dans le terminal.
+            </p>
+          </div>
+        </div>
+
+        <div class="bg-slate-950/60 p-4 rounded-xl border border-slate-900/80 space-y-2">
+          <div class="flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase tracking-wider font-mono">
+            <span>Action : {pendingPermission.toolName}</span>
+            <span>Type : {pendingPermission.type === 'bash' ? 'Bash Shell' : 'Accès Fichier'}</span>
+          </div>
+          
+          {#if pendingPermission.type === 'bash'}
+            <div class="text-xs font-mono bg-slate-950 p-3 rounded-lg border border-slate-900 overflow-x-auto text-amber-300 max-w-full whitespace-pre-wrap select-text selection:bg-amber-500/30">
+              {pendingPermission.command}
+            </div>
+          {:else}
+            <div class="text-xs font-mono bg-slate-950 p-3 rounded-lg border border-slate-900 overflow-x-auto text-amber-300 max-w-full truncate select-text selection:bg-amber-500/30" title={pendingPermission.path}>
+              {pendingPermission.path}
+            </div>
+          {/if}
+          
+          <div class="text-[11px] text-slate-450 italic">
+            {pendingPermission.actionDescription}
+          </div>
+        </div>
+
+        <div class="flex gap-3 justify-end pt-1">
+          <button 
+            onclick={() => handlePermission(false)}
+            class="px-4 py-2 bg-slate-900 hover:bg-slate-850 text-red-400 hover:text-red-300 border border-slate-800 hover:border-slate-700 rounded-xl cursor-pointer text-xs font-bold transition-all"
+          >
+            Refuser l'action
+          </button>
+          <button 
+            onclick={() => handlePermission(true)}
+            class="px-5 py-2 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 rounded-xl cursor-pointer text-xs font-bold transition-all shadow-md shadow-amber-950/30"
+          >
+            Autoriser l'action
+          </button>
+        </div>
       </div>
     {/if}
   </div>

@@ -16,6 +16,61 @@ export function isRestrictedPath(filePath: string): boolean {
   return false;
 }
 
+export const FORBIDDEN_PATTERNS = [
+  /rm\s+-(rf|fr|r)\s+\//, // rm -rf on root
+  /rm\s+-(rf|fr|r)\s+\./, // rm -rf on CWD (dangerous)
+  /mkfs/,                 // disk partitioning/formatting
+  /shutdown/,             // shutdown OS
+  /dd\s+if=/              // low-level disk writing
+];
+
+export function isCommandSafe(command: string): boolean {
+  return !FORBIDDEN_PATTERNS.some(pattern => pattern.test(command));
+}
+
+export function getToolPath(name: string, args: any): string | null {
+  if (!args) return null;
+  switch (name) {
+    case 'Read':
+    case 'Write':
+    case 'ReadRange':
+    case 'ReplaceInFile':
+      return typeof args.file_path === 'string' ? args.file_path : null;
+    case 'Mkdir':
+      return typeof args.directory_path === 'string' ? args.directory_path : null;
+    case 'List':
+    case 'Tree':
+    case 'FileSearch':
+      return typeof args.directory === 'string' ? args.directory : null;
+    default:
+      return null;
+  }
+}
+
+export function isPathAllowed(filePath: string, chatId?: string): boolean {
+  try {
+    const resolvedPath = path.resolve(filePath);
+    const resolvedCwd = path.resolve(process.cwd());
+    
+    // Check if it's inside CWD
+    const isUnderCwd = resolvedPath === resolvedCwd || resolvedPath.startsWith(resolvedCwd + path.sep);
+    if (isUnderCwd) {
+      return true;
+    }
+    
+    // Check if it's inside the chat folder (exception for artifacts)
+    if (chatId) {
+      const chatsDir = path.join(getDbPath(), 'chats');
+      const chatFolder = path.resolve(path.join(chatsDir, chatId));
+      const isUnderChatFolder = resolvedPath === chatFolder || resolvedPath.startsWith(chatFolder + path.sep);
+      if (isUnderChatFolder) {
+        return true;
+      }
+    }
+  } catch (e) {}
+  return false;
+}
+
 // Helper: Clean HTML tags and decode basic HTML entities
 function cleanHTML(input: string): string {
   let res = input.replace(/<[^>]*>/g, '');

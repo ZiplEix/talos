@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import fsPromises from 'fs/promises';
 import { existsSync, readFileSync } from 'fs';
 import { initDb, getChats, createChat, deleteChat, renameChat, updateChatMode, getChatMode, getProviders, saveProvider, deleteProvider, getModels, addModel, deleteModel, getMessages, addMessage, saveMessages, getSetting, setSetting, getDbPath } from './db';
-import { getOpenAITools, getOpenAIToolsForMode, executeTool, getToolParamValue } from './tools';
+import { getOpenAITools, getOpenAIToolsForMode, executeTool, getToolParamValue, isCommandSafe, getToolPath, isPathAllowed } from './tools';
 import { getSystemPrompt } from './prompts';
 import { TEMPLATE_VARIABLES, TEMPLATE_SYNTAX_HELP } from './promptVariables';
 
@@ -13,6 +13,35 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
+
+function askUserPermission(
+  window: BrowserWindow | null,
+  data: {
+    chatId: string;
+    type: 'bash' | 'file_access';
+    toolName: string;
+    command?: string;
+    path?: string;
+    actionDescription: string;
+  }
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!window) {
+      resolve(false);
+      return;
+    }
+
+    // Send the request to the Svelte UI
+    window.webContents.send('security:request-permission', data);
+
+    // Wait for the response from the user (via IPC once)
+    const onResponse = (_event: any, approved: boolean) => {
+      resolve(approved);
+    };
+
+    ipcMain.once('security:response-permission', onResponse);
+  });
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -295,6 +324,8 @@ ipcMain.on('openai:chat-stream-stop', (_, chatId: string) => {
     active.abort();
     console.log(`[IPC] Aborted stream for chat: ${chatId}`);
   }
+  // Cancel any pending security approval immediately
+  ipcMain.emit('security:response-permission', null, false);
 });
 
 function parseMessageContent(text: string): any {
@@ -528,8 +559,60 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
             // Arguments JSON tronqués/malformés
           }
 
-          // Exécuter l'outil
-          const result = await executeTool(tc.function.name, args, chatId);
+          let result = '';
+          let isBlocked = false;
+
+          // ── Security Interception ─────────────────────────────────────────
+          if (tc.function.name === 'Bash') {
+            const command = args.command || '';
+            
+            // 1. Guardrail blacklist check
+            if (!isCommandSafe(command)) {
+              result = "error: Command execution blocked by security guardrails. The command contains forbidden patterns (destructive actions).";
+              isBlocked = true;
+            } else {
+              // 2. Human approval check
+              console.log(`[Security] Requesting permission for Bash command: "${command}"`);
+              const approved = await askUserPermission(mainWindow, {
+                chatId,
+                type: 'bash',
+                toolName: 'Bash',
+                command: command,
+                actionDescription: `Exécution de la commande Bash : ${command}`
+              });
+              
+              if (!approved) {
+                result = "error: User rejected the execution of this Bash command for security reasons.";
+                isBlocked = true;
+              }
+            }
+          } else {
+            const targetPath = getToolPath(tc.function.name, args);
+            if (targetPath) {
+              const allowed = isPathAllowed(targetPath, chatId);
+              if (!allowed) {
+                console.log(`[Security] Requesting permission for path access: "${targetPath}" (${tc.function.name})`);
+                const approved = await askUserPermission(mainWindow, {
+                  chatId,
+                  type: 'file_access',
+                  toolName: tc.function.name,
+                  path: targetPath,
+                  actionDescription: `Accès hors espace de travail (${tc.function.name}) : ${targetPath}`
+                });
+                
+                if (!approved) {
+                  result = `error: User rejected the access to this path (${targetPath}) for security reasons.`;
+                  isBlocked = true;
+                }
+              }
+            }
+          }
+
+          if (!isBlocked) {
+            // Exécuter l'outil si non bloqué
+            result = await executeTool(tc.function.name, args, chatId);
+          }
+          // ──────────────────────────────────────────────────────────────────
 
           if (aborted) break;
 
