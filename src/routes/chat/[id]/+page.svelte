@@ -510,12 +510,14 @@
         <div class="flex w-full {msg.role === 'user' ? 'justify-end' : 'justify-start'}">
           {#if msg.role === 'user'}
             {#if editingMessageId === msg.id}
-              <div class="flex flex-col gap-2 w-[70%] bg-slate-900/40 border border-indigo-900/60 rounded-2xl p-4 shadow-md no-drag">
-                <textarea
-                  bind:value={editingMessageText}
-                  rows="3"
-                  class="w-full bg-slate-950/60 border border-slate-800 focus:border-indigo-500/50 rounded-xl px-3 py-2 text-sm text-slate-200 resize-none outline-none min-h-[80px]"
-                ></textarea>
+              <div class="flex flex-col gap-2 w-full max-w-[70%] no-drag">
+                <div class="flex items-center gap-3 w-full bg-slate-900/20 border border-slate-900 focus-within:border-indigo-500/40 rounded-2xl px-4 py-2 transition-all relative">
+                  <textarea
+                    bind:value={editingMessageText}
+                    rows="1"
+                    class="flex-1 bg-transparent text-sm text-slate-200 placeholder-slate-500 resize-none outline-none max-h-[240px] py-1.5 scrollbar-thin scrollbar-thumb-slate-900"
+                  ></textarea>
+                </div>
                 <div class="flex justify-end gap-2 text-xs">
                   <button 
                     onclick={cancelEditing}
