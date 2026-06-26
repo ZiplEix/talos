@@ -83,8 +83,8 @@ ipcMain.handle('messages:get', async (_, chatId: string) => {
   return await getMessages(chatId);
 });
 
-ipcMain.handle('messages:add', async (_, id: string, chatId: string, role: string, content: string) => {
-  return await addMessage(id, chatId, role, content);
+ipcMain.handle('messages:add', async (_, id: string, chatId: string, role: string, content: string, toolCalls?: any[], toolCallId?: string) => {
+  return await addMessage(id, chatId, role, content, toolCalls, toolCallId);
 });
 
 // Handlers pour les réglages de l'application (modèle actif, etc.)
@@ -184,10 +184,14 @@ Utilise ces outils de manière ciblée, intelligente et sécurisée pour répond
     const apiMessages = [
       { role: 'system', content: systemPrompt },
       ...chatMessages.map((m: any) => {
-        if (m.role === 'tool') {
-          return { role: 'system', content: `[Sortie outil historique] : ${m.content}` };
+        const msg: any = { role: m.role, content: m.content || '' };
+        if (m.tool_calls) {
+          msg.tool_calls = m.tool_calls;
         }
-        return { role: m.role, content: m.content };
+        if (m.tool_call_id) {
+          msg.tool_call_id = m.tool_call_id;
+        }
+        return msg;
       })
     ];
 
@@ -269,30 +273,16 @@ Utilise ces outils de manière ciblée, intelligente et sécurisée pour répond
           tool_calls: actualToolCalls
         });
 
-        // Enregistrer le texte préliminaire de l'assistant (s'il existe) dans SQLite
-        if (fullText) {
-          await addMessage(currentRequestId, chatId, 'assistant', fullText);
-        }
+        // Enregistrer l'appel de l'assistant dans la base de données
+        await addMessage(currentRequestId, chatId, 'assistant', fullText, actualToolCalls);
 
-        // 1. Synthétiser l'appel d'outil sous forme textuelle lisible pour SQLite & l'IHM Svelte
-        const toolCallSummaries = actualToolCalls.map(tc => {
-          let args: any = {};
-          try {
-            args = JSON.parse(tc.function.arguments);
-          } catch (e) {
-            // Arguments JSON tronqués/malformés
-          }
-          const paramVal = getToolParamValue(tc.function.name, args);
-          return `\`${tc.function.name}(${paramVal})\``;
-        }).join('\n\n');
-
-        const assistantToolMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
-        await addMessage(assistantToolMsgId, chatId, 'assistant', toolCallSummaries);
+        // Envoyer la notification de message outil à l'IHM
         event.sender.send('openai:chat-tool-message', {
-          id: assistantToolMsgId,
+          id: currentRequestId,
           chatId,
           role: 'assistant',
-          content: toolCallSummaries
+          content: fullText,
+          tool_calls: actualToolCalls
         });
 
         // 2. Exécuter chaque outil et envoyer son résultat à l'IHM et au modèle
@@ -316,13 +306,13 @@ Utilise ces outils de manière ciblée, intelligente et sécurisée pour répond
 
           // Enregistrer et notifier le renderer
           const toolResultMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
-          const toolResultFormatted = `📥 **Résultat** : \n\`\`\`\n${result}\n\`\`\``;
-          await addMessage(toolResultMsgId, chatId, 'tool', toolResultFormatted);
+          await addMessage(toolResultMsgId, chatId, 'tool', result, undefined, tc.id);
           event.sender.send('openai:chat-tool-message', {
             id: toolResultMsgId,
             chatId,
             role: 'tool',
-            content: toolResultFormatted
+            content: result,
+            tool_call_id: tc.id
           });
         }
 

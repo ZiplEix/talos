@@ -156,19 +156,42 @@ export async function getMessages(chatId: string): Promise<Array<{ id: string; r
   return [];
 }
 
-export async function addMessage(id: string, chatId: string, role: string, content: string): Promise<void> {
+export async function addMessage(
+  id: string,
+  chatId: string,
+  role: string,
+  content: string,
+  toolCalls?: any[],
+  toolCallId?: string
+): Promise<void> {
   const filePath = path.join(CHATS_DIR, `${chatId}.json`);
   const chatData = await readJsonFile<any>(filePath, null);
   if (chatData) {
     if (!chatData.messages) {
       chatData.messages = [];
     }
-    chatData.messages.push({
+    const index = chatData.messages.findIndex((m: any) => m.id === id);
+    const messageObj: any = {
       id,
       role,
       content,
       created_at: Date.now()
-    });
+    };
+    if (toolCalls !== undefined) {
+      messageObj.tool_calls = toolCalls;
+    }
+    if (toolCallId !== undefined) {
+      messageObj.tool_call_id = toolCallId;
+    }
+
+    if (index !== -1) {
+      chatData.messages[index] = {
+        ...chatData.messages[index],
+        ...messageObj
+      };
+    } else {
+      chatData.messages.push(messageObj);
+    }
     await writeJsonFile(filePath, chatData);
   } else {
     throw new Error(`Chat ${chatId} not found to add message`);

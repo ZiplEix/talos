@@ -12,8 +12,8 @@
   let chatId = $derived($page.params.id || '');
 
   let chatTitle = $state('Discussion');
-  let messages = $state<Array<{ id: string; role: string; content: string }>>([]);
-  let visibleMessages = $derived(messages.filter(m => m.role !== 'tool' && m.content !== ''));
+  let messages = $state<Array<{ id: string; role: string; content: string; tool_calls?: any[]; tool_call_id?: string }>>([]);
+  let visibleMessages = $derived(messages.filter(m => m.role !== 'tool' && (m.content !== '' || (m.tool_calls && m.tool_calls.length > 0))));
 
   let streamCleanups: (() => void)[] = [];
   function clearStreamSubscriptions() {
@@ -269,7 +269,16 @@
     try {
       if (window.talosAPI) {
         // Envoi en mode streaming réel via Electron
-        const plainMessages = messages.map(m => ({ role: m.role, content: m.content }));
+        const plainMessages = messages.map(m => {
+          const apiMsg: any = { role: m.role, content: m.content || '' };
+          if (m.tool_calls) {
+            apiMsg.tool_calls = m.tool_calls;
+          }
+          if (m.tool_call_id) {
+            apiMsg.tool_call_id = m.tool_call_id;
+          }
+          return apiMsg;
+        });
         const cleanMessages = $state.snapshot(plainMessages);
         
         const aiMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
@@ -421,8 +430,44 @@
             </div>
           {:else}
             <!-- Assistant Message (Markdown HTML, left-aligned, no bubble) -->
-            <div class="max-w-[85%] text-slate-200 text-sm leading-relaxed py-2 markdown-body w-full">
-              {@html renderMarkdown(msg.content)}
+            <div class="max-w-[85%] text-slate-200 text-sm leading-relaxed py-2 markdown-body w-full space-y-3">
+              {#if msg.content}
+                <div>{@html renderMarkdown(msg.content)}</div>
+              {/if}
+              
+              {#if msg.tool_calls && msg.tool_calls.length > 0}
+                <div class="space-y-3 border-l-2 border-slate-800 pl-4 py-1.5 mt-2 bg-slate-900/10 rounded-r-lg">
+                  {#each msg.tool_calls as tc}
+                    {@const response = messages.find(m => m.role === 'tool' && m.tool_call_id === tc.id)}
+                    <div class="space-y-1">
+                      <div class="flex items-center gap-2 text-xs font-semibold text-indigo-400">
+                        <span class="p-1 rounded bg-indigo-500/10 text-indigo-400">🔧</span>
+                        <span>Appel d'outil : {tc.function.name}</span>
+                      </div>
+                      {#if tc.function.arguments}
+                        <pre class="bg-slate-950/60 p-2.5 rounded border border-slate-900/60 text-[11px] font-mono text-slate-300 overflow-x-auto max-w-full">{tc.function.arguments}</pre>
+                      {/if}
+                      
+                      {#if response}
+                        <details class="group mt-2">
+                          <summary class="flex items-center gap-1 text-[11px] font-medium text-slate-500 hover:text-slate-300 cursor-pointer select-none outline-none">
+                            <span class="transition-transform group-open:rotate-90">▶</span>
+                            <span>Afficher le résultat de l'outil</span>
+                          </summary>
+                          <div class="mt-1.5 border border-slate-900 rounded bg-slate-950/40 p-3 text-slate-350 text-xs font-mono max-h-80 overflow-y-auto whitespace-pre-wrap leading-relaxed">
+                            {response.content}
+                          </div>
+                        </details>
+                      {:else}
+                        <div class="flex items-center gap-1.5 text-[11px] text-slate-500 italic mt-1 animate-pulse">
+                          <span class="inline-block w-1.5 h-1.5 rounded-full bg-slate-500"></span>
+                          <span>En attente du résultat...</span>
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              {/if}
             </div>
           {/if}
         </div>

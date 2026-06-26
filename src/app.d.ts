@@ -24,8 +24,8 @@ declare global {
 			addModel: (id: string, providerId: string, name: string) => Promise<void>;
 			deleteModel: (id: string) => Promise<void>;
 			
-			getMessages: (chatId: string) => Promise<Array<{ id: string; role: string; content: string }>>;
-			addMessage: (id: string, chatId: string, role: string, content: string) => Promise<void>;
+			getMessages: (chatId: string) => Promise<Array<{ id: string; role: string; content: string; tool_calls?: any[]; tool_call_id?: string }>>;
+			addMessage: (id: string, chatId: string, role: string, content: string, toolCalls?: any[], toolCallId?: string) => Promise<void>;
 			
 			getSetting: (key: string, defaultValue: string) => Promise<string>;
 			setSetting: (key: string, value: string) => Promise<void>;

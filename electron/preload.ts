@@ -16,7 +16,8 @@ contextBridge.exposeInMainWorld("talosAPI", {
   deleteModel: (id: string) => ipcRenderer.invoke('models:delete', id),
 
   getMessages: (chatId: string) => ipcRenderer.invoke('messages:get', chatId),
-  addMessage: (id: string, chatId: string, role: string, content: string) => ipcRenderer.invoke('messages:add', id, chatId, role, content),
+  addMessage: (id: string, chatId: string, role: string, content: string, toolCalls?: any[], toolCallId?: string) => 
+    ipcRenderer.invoke('messages:add', id, chatId, role, content, toolCalls, toolCallId),
   
   getSetting: (key: string, defaultValue: string) => ipcRenderer.invoke('settings:get', key, defaultValue),
   setSetting: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value),
