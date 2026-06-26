@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { page } from '$app/stores';
-  import { 
-    Send, Bot, User, Cpu, Sparkles, FolderOpen, 
-    Paperclip, X, RefreshCw, AlertCircle, Square, Pencil 
+  import { goto } from '$app/navigation';
+  import {
+    Send, Sparkles, FolderOpen,
+    Paperclip, X, Square, Pencil
   } from 'lucide-svelte';
   import { marked } from 'marked';
   import ModelSelector from '$lib/components/ModelSelector.svelte';
@@ -102,6 +103,7 @@
 
   onMount(() => {
     loadInitialSettings();
+    loadModelSuggestions();
 
     const handleRenameEvent = (e: Event) => {
       const detail = (e as CustomEvent).detail;
@@ -383,9 +385,248 @@
     }
   }
 
+  // ── Slash Commands & Autocomplete ─────────────────────────────
+
+  const slashCommands = [
+    { name: '/help', desc: 'Show available commands' },
+    { name: '/model', desc: 'Show current model / provider, or switch model with /model <provider/model>' },
+    { name: '/clear', desc: 'Start a new conversation' },
+    { name: '/new', desc: 'Start a new conversation' },
+  ];
+
+  let showSuggestions = $state(false);
+  let selectedSuggestionIndex = $state(0);
+  let modelSuggestions = $state<Array<{ label: string; providerId: string; modelName: string }>>([]);
+
+  // Load available models for autocomplete suggestions
+  async function loadModelSuggestions() {
+    if (window.talosAPI) {
+      try {
+        const provs = await window.talosAPI.getProviders();
+        const suggestions: Array<{ label: string; providerId: string; modelName: string }> = [];
+        for (const p of provs) {
+          const mods = await window.talosAPI.getModels(p.id);
+          for (const m of mods) {
+            suggestions.push({
+              label: `${p.name}/${m.name}`,
+              providerId: p.id,
+              modelName: m.name
+            });
+          }
+        }
+        modelSuggestions = suggestions;
+      } catch (err) {
+        console.error(err);
+        loadModelSuggestionsFromLocalStorage();
+      }
+    } else {
+      loadModelSuggestionsFromLocalStorage();
+    }
+  }
+
+  function loadModelSuggestionsFromLocalStorage() {
+    const savedProvs = localStorage.getItem('talos_providers');
+    const provs = savedProvs ? JSON.parse(savedProvs) : [];
+    const suggestions: Array<{ label: string; providerId: string; modelName: string }> = [];
+    for (const p of provs) {
+      const savedMods = localStorage.getItem(`talos_models_${p.id}`);
+      const mods = savedMods ? JSON.parse(savedMods) : [];
+      for (const m of mods) {
+        suggestions.push({
+          label: `${p.name}/${m.name}`,
+          providerId: p.id,
+          modelName: m.name
+        });
+      }
+    }
+    modelSuggestions = suggestions;
+  }
+
+  // Reactive: update suggestion visibility when input changes
+  $effect(() => {
+    const text = inputMessage;
+    if (text.startsWith('/') && !text.includes('\n')) {
+      const parts = text.split(/\s+/);
+
+      // If we have "/model " followed by a partial model name
+      if (parts[0].toLowerCase() === '/model' && parts.length >= 2) {
+        const partial = parts.slice(1).join(' ').toLowerCase();
+        const matched = modelSuggestions.filter(m => m.label.toLowerCase().includes(partial));
+        if (matched.length > 0) {
+          showSuggestions = true;
+          if (selectedSuggestionIndex >= matched.length) {
+            selectedSuggestionIndex = 0;
+          }
+        } else {
+          showSuggestions = false;
+        }
+      }
+      // If we're still typing the command itself (no space yet)
+      else if (parts.length === 1) {
+        const partial = parts[0].toLowerCase();
+        const matched = slashCommands.filter(cmd => cmd.name.startsWith(partial));
+        if (matched.length > 0) {
+          showSuggestions = true;
+          if (selectedSuggestionIndex >= matched.length) {
+            selectedSuggestionIndex = 0;
+          }
+        } else {
+          showSuggestions = false;
+        }
+      } else {
+        showSuggestions = false;
+      }
+    } else {
+      showSuggestions = false;
+    }
+  });
+
+  // Filtered suggestions based on current input
+  let filteredSuggestions = $derived.by(() => {
+    if (!showSuggestions) return [];
+    const parts = inputMessage.split(/\s+/);
+
+    // If we're past "/model " ➜ show model suggestions
+    if (parts[0].toLowerCase() === '/model' && parts.length >= 2) {
+      const partial = parts.slice(1).join(' ').toLowerCase();
+      return modelSuggestions.filter(m => m.label.toLowerCase().includes(partial));
+    }
+
+    // Otherwise show command name suggestions
+    const partial = parts[0].toLowerCase();
+    return slashCommands.filter(cmd => cmd.name.startsWith(partial));
+  });
+
+  let providersList = $state<Array<{ id: string; name: string }>>([]);
+
+  async function getProviderName(providerId: string): Promise<string> {
+    // Try to load providers if not already loaded
+    if (providersList.length === 0) {
+      if (window.talosAPI) {
+        try {
+          const provs = await window.talosAPI.getProviders();
+          providersList = provs;
+        } catch (err) {
+          console.error(err);
+        }
+      } else {
+        const saved = localStorage.getItem('talos_providers');
+        if (saved) {
+          providersList = JSON.parse(saved);
+        }
+      }
+    }
+    const provider = providersList.find(p => p.id === providerId);
+    return provider?.name || providerId;
+  }
+
+  async function handleSlashCommand(text: string): Promise<boolean> {
+    const parts = text.split(/\s+/);
+    const cmd = parts[0].toLowerCase();
+
+    // /model <name> — change model (no provider change, keep current provider)
+    if (cmd === '/model' && parts.length >= 2) {
+      const newModelName = parts.slice(1).join(' ');
+
+      // Persist the change
+      activeModel = newModelName;
+      if (window.talosAPI) {
+        try {
+          await window.talosAPI.setSetting('active_model_name', newModelName);
+        } catch (err) {
+          console.error(err);
+        }
+      } else {
+        localStorage.setItem('talos_active_model_name', newModelName);
+      }
+
+      // Add a system message to confirm (not sent to AI, just for the user)
+      const providerName = await getProviderName(activeProviderId);
+      const sysMsgId = `sys-${Math.random().toString(36).substring(2, 9)}`;
+      const sysMsg = { id: sysMsgId, role: 'system', content: `Model set to **${newModelName}** (provider: ${providerName})` };
+      messages.push(sysMsg);
+      await scrollToBottom();
+      return true;
+    }
+
+    // /model — show current model/provider info
+    if (cmd === '/model') {
+      const providerName = await getProviderName(activeProviderId);
+      const sysMsgId = `sys-${Math.random().toString(36).substring(2, 9)}`;
+      const sysMsg = { id: sysMsgId, role: 'system', content: `**Current model:** ${activeModel || 'none'}\n**Current provider:** ${providerName}` };
+      messages.push(sysMsg);
+      await scrollToBottom();
+      return true;
+    }
+
+    // /clear or /new — create a new conversation and navigate to it
+    if (cmd === '/clear' || cmd === '/new') {
+      const newId = Math.random().toString(36).substring(2, 9);
+      const newTitle = `Chat ${newId.substring(0, 5)}`;
+
+      // Notify the layout to add the new chat via CustomEvent (the layout listens for it)
+      // But the layout creates chats from its own Sidebar button. We'll create it ourselves.
+      if (window.talosAPI) {
+        try {
+          await window.talosAPI.createChat(newId, newTitle);
+        } catch (err) {
+          console.error(err);
+          // fallback: localStorage
+          const savedChats = JSON.parse(localStorage.getItem('talos_chats') || '[]');
+          savedChats.unshift({ id: newId, title: newTitle, created_at: Date.now() });
+          localStorage.setItem('talos_chats', JSON.stringify(savedChats));
+        }
+      } else {
+        const savedChats = JSON.parse(localStorage.getItem('talos_chats') || '[]');
+        savedChats.unshift({ id: newId, title: newTitle, created_at: Date.now() });
+        localStorage.setItem('talos_chats', JSON.stringify(savedChats));
+      }
+
+      // Dispatch event so the layout re-fetches the chats list
+      window.dispatchEvent(new CustomEvent('talos:chat-created'));
+
+      // Navigate to the new chat
+      await goto(`/chat/${newId}`);
+      return true;
+    }
+
+    // /help — show available commands
+    if (cmd === '/help') {
+      let helpText = '**Available slash commands:**\n\n';
+      for (const sc of slashCommands) {
+        helpText += `- \`${sc.name}\` — ${sc.desc}\n`;
+      }
+      const sysMsgId = `sys-${Math.random().toString(36).substring(2, 9)}`;
+      const sysMsg = { id: sysMsgId, role: 'system', content: helpText };
+      messages.push(sysMsg);
+      await scrollToBottom();
+      return true;
+    }
+
+    // Unknown command — show a hint
+    if (cmd.startsWith('/')) {
+      const sysMsgId = `sys-${Math.random().toString(36).substring(2, 9)}`;
+      const sysMsg = { id: sysMsgId, role: 'system', content: `Unknown command: \`${cmd}\`. Type \`/help\` for available commands.` };
+      messages.push(sysMsg);
+      await scrollToBottom();
+      return true;
+    }
+
+    return false; // Not a slash command, proceed normally
+  }
+
   async function sendMessage() {
     const text = inputMessage.trim();
     if (!text && attachedFiles.length === 0) return;
+
+    inputMessage = '';
+    attachedFiles = [];
+
+    // ── Check for slash commands first ──
+    if (text.startsWith('/')) {
+      const handled = await handleSlashCommand(text);
+      if (handled) return;
+    }
 
     if (!activeModel) {
       messages.push({
@@ -397,21 +638,14 @@
       return;
     }
 
-    const textWithFiles = attachedFiles.length > 0 
-      ? `[Fichiers joints: ${attachedFiles.join(', ')}]\n\n${text}` 
-      : text;
-
-    inputMessage = '';
-    attachedFiles = [];
-
     const userMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
-    const userMsg = { id: userMsgId, role: 'user', content: textWithFiles };
+    const userMsg = { id: userMsgId, role: 'user', content: text };
     
     messages.push(userMsg);
     
     if (window.talosAPI) {
       try {
-        await window.talosAPI.addMessage(userMsgId, chatId, 'user', textWithFiles);
+        await window.talosAPI.addMessage(userMsgId, chatId, 'user', text);
       } catch (err) {
         console.error(err);
         saveMessageToLocalStorage(chatId, userMsg);
@@ -489,6 +723,53 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    // ── Autocomplete navigation ──
+    if (showSuggestions && filteredSuggestions.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        selectedSuggestionIndex = Math.min(selectedSuggestionIndex + 1, filteredSuggestions.length - 1);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        selectedSuggestionIndex = Math.max(selectedSuggestionIndex - 1, 0);
+        return;
+      }
+      if (e.key === 'Tab' || e.key === 'Enter') {
+        e.preventDefault();
+        const selected = filteredSuggestions[selectedSuggestionIndex];
+        if (selected) {
+          // Check if this is a model suggestion (has providerId)
+          if ('providerId' in selected && 'modelName' in selected) {
+            const modelSuggestion = selected as any;
+            // Change both provider and model directly
+            activeProviderId = modelSuggestion.providerId;
+            activeModel = modelSuggestion.modelName;
+            if (window.talosAPI) {
+              window.talosAPI.setSetting('active_provider_id', modelSuggestion.providerId);
+              window.talosAPI.setSetting('active_model_name', modelSuggestion.modelName);
+            } else {
+              localStorage.setItem('talos_active_provider_id', modelSuggestion.providerId);
+              localStorage.setItem('talos_active_model_name', modelSuggestion.modelName);
+            }
+            inputMessage = '';
+            showSuggestions = false;
+          } else {
+            // It's a slash command suggestion
+            inputMessage = selected.name + ' ';
+          }
+          selectedSuggestionIndex = 0;
+          return;
+        }
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        showSuggestions = false;
+        selectedSuggestionIndex = 0;
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -657,6 +938,56 @@
     <div class="flex flex-col gap-3">
       <!-- Message input card (Borderless text, round send button inside) -->
       <div class="flex items-center gap-3 w-full bg-slate-900/20 border border-slate-900 focus-within:border-indigo-500/40 rounded-2xl px-4 py-2 transition-all relative">
+
+        <!-- Slash command autocomplete dropdown -->
+        {#if showSuggestions && filteredSuggestions.length > 0}
+          <div class="absolute bottom-full left-0 right-0 mb-2 bg-[#0b0f19] border border-slate-900 rounded-xl shadow-2xl z-50 p-1.5 overflow-hidden">
+            {#each filteredSuggestions as item, i}
+              {@const isModelSugg = 'providerId' in item}
+              <button
+                onclick={() => {
+                  if (isModelSugg) {
+                    const ms = item as any;
+                    activeProviderId = ms.providerId;
+                    activeModel = ms.modelName;
+                    if (window.talosAPI) {
+                      window.talosAPI.setSetting('active_provider_id', ms.providerId);
+                      window.talosAPI.setSetting('active_model_name', ms.modelName);
+                    } else {
+                      localStorage.setItem('talos_active_provider_id', ms.providerId);
+                      localStorage.setItem('talos_active_model_name', ms.modelName);
+                    }
+                    inputMessage = '';
+                  } else {
+                    inputMessage = (item as any).name + ' ';
+                  }
+                  showSuggestions = false;
+                  selectedSuggestionIndex = 0;
+                  textareaElement?.focus();
+                }}
+                class="w-full text-left px-3 py-2 rounded-lg text-xs transition-all cursor-pointer flex items-center justify-between gap-2 {
+                  i === selectedSuggestionIndex
+                    ? 'bg-indigo-600/15 text-indigo-400 border border-indigo-500/15'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40 border border-transparent'
+                }"
+              >
+                {#if isModelSugg}
+                  <span class="font-mono font-bold">{(item as any).label}</span>
+                  <span class="text-slate-500 text-[10px]">Switch model</span>
+                {:else}
+                  <span class="font-mono font-bold">{(item as any).name}</span>
+                  <span class="text-slate-500 truncate">{(item as any).desc}</span>
+                {/if}
+              </button>
+            {/each}
+            <div class="px-3 py-1.5 text-[10px] text-slate-600 border-t border-slate-900/80 mt-1 pt-2 flex items-center gap-3">
+              <span><kbd class="text-slate-400 font-mono">↑↓</kbd> Navigate</span>
+              <span><kbd class="text-slate-400 font-mono">⏎</kbd><kbd class="text-slate-400 font-mono ml-1">⇥</kbd> Select</span>
+              <span><kbd class="text-slate-400 font-mono">⎋</kbd> Close</span>
+            </div>
+          </div>
+        {/if}
+
         <textarea
           placeholder="Envoyez un message à votre agent..."
           bind:value={inputMessage}

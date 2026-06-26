@@ -23,6 +23,9 @@
 
     // Load chats
     await loadChats();
+
+    // Listen for chat-created events (from slash commands like /clear, /new)
+    window.addEventListener('talos:chat-created', loadChats);
   });
 
   async function loadChats() {
