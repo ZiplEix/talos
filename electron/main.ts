@@ -267,6 +267,52 @@ ipcMain.handle('chat:save-media', async (_event, chatId: string, filename: strin
   }
 });
 
+ipcMain.handle('chat:generate-title', async (_, chatId: string, firstMessage: string, providerId: string, model: string) => {
+  try {
+    const providersList = await getProviders();
+    const provider = providersList.find(p => p.id === providerId);
+    if (!provider) {
+      throw new Error(`Provider introuvable : ${providerId}`);
+    }
+
+    let baseUrl = provider.base_url;
+    if (providerId === 'ollama' && !baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) {
+      baseUrl = baseUrl.replace(/\/$/, '') + '/v1';
+    }
+
+    const client = new OpenAI({
+      apiKey: provider.api_key || 'dummy-key',
+      baseURL: baseUrl,
+    });
+
+    const prompt = `Generate a short title (four words or less) that describes the topic of the user's message.
+Reply with only the title, nothing else. Do not show your reasoning.
+
+Examples:
+- "how do I reverse a list in python?" → Python list reversal
+- "what's the weather in Tokyo?" → Tokyo weather
+- "explain how transformers work in ML" → ML transformers explained
+
+User message:
+"${firstMessage}"`;
+
+    const response = await client.chat.completions.create({
+      model: model,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 15,
+      temperature: 0.1,
+    });
+
+    const generatedTitle = response.choices[0].message.content?.trim().replace(/^["'«»“”]|["'«»“”]$/g, '') || 'Discussion';
+    
+    await renameChat(chatId, generatedTitle);
+    return generatedTitle;
+  } catch (error) {
+    console.error('Failed to generate chat title:', error);
+    return null;
+  }
+});
+
 // Handlers pour le dossier de travail actuel (CWD)
 ipcMain.handle('cwd:get', () => {
   return process.cwd();

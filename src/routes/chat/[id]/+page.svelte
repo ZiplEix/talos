@@ -750,11 +750,22 @@
     const userMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
     const userMsg = { id: userMsgId, role: 'user', content: textToSend };
     
+    const isFirstUserMessage = messages.filter(m => m.role === 'user').length === 0;
     messages.push(userMsg);
     
     if (window.talosAPI) {
       try {
         await window.talosAPI.addMessage(userMsgId, chatId, 'user', textToSend);
+        
+        // Auto-generate title for new chats using the first message
+        if (isFirstUserMessage && (chatTitle.startsWith('Nouveau Chat') || chatTitle === 'Discussion' || chatTitle === 'New Chat')) {
+          window.talosAPI.generateChatTitle(chatId, text, activeProviderId, activeModel).then((newTitle) => {
+            if (newTitle) {
+              chatTitle = newTitle;
+              window.dispatchEvent(new CustomEvent('talos:chat-renamed', { detail: { id: chatId, title: newTitle } }));
+            }
+          }).catch(err => console.error('Failed to auto-generate title:', err));
+        }
       } catch (err) {
         console.error(err);
         saveMessageToLocalStorage(chatId, userMsg);

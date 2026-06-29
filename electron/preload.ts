@@ -82,4 +82,6 @@ contextBridge.exposeInMainWorld("talosAPI", {
     };
   },
   respondSecurityPermission: (approved: boolean) => ipcRenderer.send('security:response-permission', approved),
+  generateChatTitle: (chatId: string, firstMessage: string, providerId: string, model: string) => 
+    ipcRenderer.invoke('chat:generate-title', chatId, firstMessage, providerId, model),
 });
