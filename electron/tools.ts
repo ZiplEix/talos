@@ -1100,6 +1100,37 @@ export function getOpenAITools() {
           properties: {}
         }
       }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'run_parallel_agents',
+        description: 'Délègue des tâches complexes à des sous-agents qui travailleront en parallèle. À utiliser pour explorer plusieurs fichiers en même temps, ou écrire/vérifier plusieurs scripts indépendants.',
+        parameters: {
+          type: 'object',
+          properties: {
+            tasks: {
+              type: 'array',
+              description: 'La liste des missions à accomplir en parallèle.',
+              items: {
+                type: 'object',
+                properties: {
+                  agent_name: {
+                    type: 'string',
+                    description: "Un nom court pour le sous-agent (ex: 'Tester', 'Linter', 'Writer')"
+                  },
+                  mission: {
+                    type: 'string',
+                    description: 'La description détaillée, autonome et précise de la tâche à accomplir.'
+                  }
+                },
+                required: ['agent_name', 'mission']
+              }
+            }
+          },
+          required: ['tasks']
+        }
+      }
     }
   ];
 }
@@ -1109,6 +1140,6 @@ export function getOpenAIToolsForMode(mode: string): any[] {
   if (mode === 'agent') {
     return tools;
   }
-  const excludeNames = ['Write', 'Mkdir', 'Bash', 'ReplaceInFile'];
+  const excludeNames = ['Write', 'Mkdir', 'Bash', 'ReplaceInFile', 'run_parallel_agents'];
   return tools.filter(t => !excludeNames.includes(t.function.name));
 }

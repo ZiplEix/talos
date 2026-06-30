@@ -57,21 +57,38 @@
   let textareaElement = $state<HTMLTextAreaElement | null>(null);
   let editAreaElement = $state<HTMLTextAreaElement | null>(null);
 
-  // State pour les demandes de sécurité en attente
-  let pendingPermission = $state<{
+  // State pour les demandes de sécurité en attente (file d'attente / queue)
+  let pendingPermissions = $state<Array<{
+    permissionId: string;
     chatId: string;
     type: 'bash' | 'file_access';
     toolName: string;
     command?: string;
     path?: string;
     actionDescription: string;
-  } | null>(null);
+    agentName?: string;
+  }>>([]);
 
-  function handlePermission(approved: boolean) {
+  // State pour le suivi des sous-agents en cours d'exécution
+  let subAgentsStatus = $state<Record<string, { mission: string; status: string; isDone: boolean; error?: string }>>({});
+  let showSubAgentsPanel = $state(false);
+
+  // Paramètres d'activation des sous-agents (global et par chat)
+  let subagentsGlobalEnabled = $state(true);
+  let subagentsChatEnabled = $state(true);
+
+  function handlePermission(permissionId: string, approved: boolean) {
     if (window.talosAPI) {
-      window.talosAPI.respondSecurityPermission(approved);
+      window.talosAPI.respondSecurityPermission(permissionId, approved);
     }
-    pendingPermission = null;
+    pendingPermissions = pendingPermissions.filter(p => p.permissionId !== permissionId);
+  }
+
+  async function toggleSubagentsChatEnabled() {
+    subagentsChatEnabled = !subagentsChatEnabled;
+    if (window.talosAPI) {
+      await window.talosAPI.setSetting(`chat_${chatId}_subagents_enabled`, String(subagentsChatEnabled));
+    }
   }
 
   // Auto-resize the input textarea height based on content
@@ -105,7 +122,8 @@
   // Surveille le changement de chatId pour recharger la conversation
   $effect(() => {
     if (chatId) {
-      pendingPermission = null;
+      pendingPermissions = [];
+      subAgentsStatus = {};
       clearStreamSubscriptions();
       loadConversationData(chatId).then(() => {
         // Après HMR : si un stream est encore en cours pour ce chat, se réabonner
@@ -140,10 +158,42 @@
     window.addEventListener('talos:chat-renamed', handleRenameEvent);
 
     let unsubSecurity: (() => void) | null = null;
+    let unsubSubAgentsStarted: (() => void) | null = null;
+    let unsubSubAgentStatus: (() => void) | null = null;
+
     if (window.talosAPI) {
       unsubSecurity = window.talosAPI.onSecurityRequestPermission((data) => {
         if (data.chatId === chatId) {
-          pendingPermission = data;
+          pendingPermissions.push(data);
+          tick().then(scrollToBottom);
+        }
+      });
+
+      unsubSubAgentsStarted = window.talosAPI.onSubAgentsStarted((data) => {
+        if (data.chatId === chatId) {
+          const newStatuses: Record<string, { mission: string; status: string; isDone: boolean }> = {};
+          for (const task of data.tasks) {
+            newStatuses[task.agent_name] = {
+              mission: task.mission,
+              status: 'Initialisation...',
+              isDone: false
+            };
+          }
+          subAgentsStatus = newStatuses;
+          showSubAgentsPanel = true;
+          tick().then(scrollToBottom);
+        }
+      });
+
+      unsubSubAgentStatus = window.talosAPI.onSubAgentStatus((data) => {
+        if (data.chatId === chatId) {
+          if (subAgentsStatus[data.agent_name]) {
+            subAgentsStatus[data.agent_name].status = data.status;
+            subAgentsStatus[data.agent_name].isDone = data.isDone;
+            if (data.error) {
+              subAgentsStatus[data.agent_name].error = data.error;
+            }
+          }
           tick().then(scrollToBottom);
         }
       });
@@ -152,6 +202,8 @@
     return () => {
       window.removeEventListener('talos:chat-renamed', handleRenameEvent);
       if (unsubSecurity) unsubSecurity();
+      if (unsubSubAgentsStarted) unsubSubAgentsStarted();
+      if (unsubSubAgentStatus) unsubSubAgentStatus();
     };
   });
 
@@ -162,6 +214,7 @@
         cwd = await window.talosAPI.getCwd();
         activeProviderId = await window.talosAPI.getSetting('active_provider_id', 'ollama');
         activeModel = await window.talosAPI.getSetting('active_model_name', '');
+        subagentsGlobalEnabled = (await window.talosAPI.getSetting('subagents_enabled', 'true')) === 'true';
       } catch (err) {
         console.error(err);
         loadSettingsFromLocalStorage();
@@ -176,6 +229,7 @@
     cwd = localStorage.getItem('talos_cwd') || '/Users/bleroyer/perso/talos';
     activeProviderId = localStorage.getItem('talos_active_provider_id') || 'ollama';
     activeModel = localStorage.getItem('talos_active_model_name') || '';
+    subagentsGlobalEnabled = true;
   }
 
   async function loadConversationData(id: string) {
@@ -183,6 +237,17 @@
     messages = [];
     attachedFiles = [];
     attachedFileObjects = [];
+
+    // Charger le statut d'activation des sous-agents pour ce chat
+    if (window.talosAPI) {
+      try {
+        subagentsChatEnabled = (await window.talosAPI.getSetting(`chat_${id}_subagents_enabled`, 'true')) === 'true';
+      } catch (e) {
+        subagentsChatEnabled = true;
+      }
+    } else {
+      subagentsChatEnabled = true;
+    }
 
     // 1. Charger le titre de la discussion
     let foundTitle = 'Discussion';
@@ -855,6 +920,13 @@
   }
 
   function handleWindowKeydown(e: KeyboardEvent) {
+    if (pendingPermissions.length > 0 && e.key === 'Enter') {
+      e.preventDefault();
+      const activePerm = pendingPermissions[0];
+      handlePermission(activePerm.permissionId, true);
+      return;
+    }
+
     if (isThinking && e.ctrlKey && e.key.toLowerCase() === 'c') {
       const selection = window.getSelection()?.toString();
       if (!selection) {
@@ -1136,56 +1208,109 @@
       </div>
     {/if}
 
-    {#if pendingPermission}
+    {#if showSubAgentsPanel && Object.keys(subAgentsStatus).length > 0}
+      <div class="border border-indigo-500/20 bg-indigo-950/5 rounded-2xl p-5 space-y-4 max-w-2xl animate-in fade-in slide-in-from-bottom-2 duration-300 relative overflow-hidden backdrop-blur-sm shadow-md">
+        <div class="flex items-center justify-between text-xs font-bold text-indigo-400 font-mono uppercase tracking-wider select-none">
+          <div class="flex items-center gap-2.5">
+            <span class="p-1 rounded bg-indigo-500/10 text-indigo-400">🤖</span>
+            <span>Sous-Agents en cours d'exécution parallèle ({Object.values(subAgentsStatus).filter(s => s.isDone).length}/{Object.keys(subAgentsStatus).length})</span>
+          </div>
+          <button 
+            type="button"
+            onclick={() => showSubAgentsPanel = false}
+            class="p-1 hover:bg-slate-900 rounded text-slate-500 hover:text-slate-355 transition-colors cursor-pointer shrink-0 flex items-center justify-center"
+            title="Masquer le panneau"
+          >
+            <X size={12} />
+          </button>
+        </div>
+        <div class="divide-y divide-slate-900/60">
+          {#each Object.entries(subAgentsStatus) as [name, info]}
+            <div class="py-2.5 flex items-center justify-between gap-4 text-xs">
+              <div class="flex-1 min-w-0">
+                <span class="font-bold text-slate-200">{name}</span>
+                <span class="text-slate-500 font-mono text-[10px] ml-2 truncate inline-block max-w-[60%] align-middle" title={info.mission}>{info.mission}</span>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                {#if info.isDone}
+                  {#if info.error}
+                    <span class="text-red-400 font-semibold flex items-center gap-1">
+                      ❌ Erreur
+                    </span>
+                  {:else}
+                    <span class="text-emerald-400 font-semibold flex items-center gap-1">
+                      ✅ Terminé
+                    </span>
+                  {/if}
+                {:else}
+                  <span class="text-indigo-400 animate-pulse flex items-center gap-1.5 font-mono">
+                    <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping"></span>
+                    {info.status}
+                  </span>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
+    {#if pendingPermissions.length > 0}
+      {@const activePerm = pendingPermissions[0]}
       <div class="border border-amber-500/25 bg-amber-950/10 rounded-2xl p-5 space-y-4 max-w-2xl animate-in fade-in slide-in-from-bottom-2 duration-300 relative overflow-hidden backdrop-blur-sm shadow-lg z-20">
-        <!-- Accent line decoration -->
-        <div class="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-amber-500 to-orange-500"></div>
-        
         <div class="flex items-start gap-3">
           <div class="p-2 bg-amber-500/10 border border-amber-500/25 text-amber-400 rounded-xl">
             <span class="text-sm">🛡️</span>
           </div>
           <div class="flex-1 space-y-1">
-            <h4 class="text-sm font-bold text-slate-200">Autorisation de Sécurité Requise</h4>
+            <h4 class="text-sm font-bold text-slate-200">
+              {#if activePerm.agentName}
+                Autorisation Requise pour Talos-{activePerm.agentName}
+              {:else}
+                Autorisation de Sécurité Requise
+              {/if}
+            </h4>
             <p class="text-xs text-slate-400 leading-relaxed">
-              L'agent demande à effectuer une action sensible en dehors de l'espace de travail standard ou dans le terminal.
+              Un agent demande à effectuer une action sensible en dehors de l'espace de travail standard ou dans le terminal.
             </p>
           </div>
         </div>
 
         <div class="bg-slate-950/60 p-4 rounded-xl border border-slate-900/80 space-y-2">
           <div class="flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase tracking-wider font-mono">
-            <span>Action : {pendingPermission.toolName}</span>
-            <span>Type : {pendingPermission.type === 'bash' ? 'Bash Shell' : 'Accès Fichier'}</span>
+            <span>Action : {activePerm.toolName}</span>
+            <span>Type : {activePerm.type === 'bash' ? 'Bash Shell' : 'Accès Fichier'}</span>
           </div>
           
-          {#if pendingPermission.type === 'bash'}
+          {#if activePerm.type === 'bash'}
             <div class="text-xs font-mono bg-slate-950 p-3 rounded-lg border border-slate-900 overflow-x-auto text-amber-300 max-w-full whitespace-pre-wrap select-text selection:bg-amber-500/30">
-              {pendingPermission.command}
+              {activePerm.command}
             </div>
           {:else}
-            <div class="text-xs font-mono bg-slate-950 p-3 rounded-lg border border-slate-900 overflow-x-auto text-amber-300 max-w-full truncate select-text selection:bg-amber-500/30" title={pendingPermission.path}>
-              {pendingPermission.path}
+            <div class="text-xs font-mono bg-slate-950 p-3 rounded-lg border border-slate-900 overflow-x-auto text-amber-300 max-w-full truncate select-text selection:bg-amber-500/30" title={activePerm.path}>
+              {activePerm.path}
             </div>
           {/if}
           
           <div class="text-[11px] text-slate-450 italic">
-            {pendingPermission.actionDescription}
+            {activePerm.actionDescription}
           </div>
         </div>
 
         <div class="flex gap-3 justify-end pt-1">
           <button 
-            onclick={() => handlePermission(false)}
+            onclick={() => handlePermission(activePerm.permissionId, false)}
             class="px-4 py-2 bg-slate-900 hover:bg-slate-850 text-red-400 hover:text-red-300 border border-slate-800 hover:border-slate-700 rounded-xl cursor-pointer text-xs font-bold transition-all"
           >
             Refuser l'action
           </button>
           <button 
-            onclick={() => handlePermission(true)}
-            class="px-5 py-2 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 rounded-xl cursor-pointer text-xs font-bold transition-all shadow-md shadow-amber-950/30"
+            onclick={() => handlePermission(activePerm.permissionId, true)}
+            class="px-5 py-2 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 rounded-xl cursor-pointer text-xs font-bold transition-all shadow-md shadow-amber-950/30 flex items-center gap-2"
+            title="Autoriser l'action (Appuyer sur Entrée)"
           >
-            Autoriser l'action
+            <span>Autoriser l'action</span>
+            <kbd class="px-1.5 py-0.5 text-[9px] bg-slate-950/35 text-slate-900 rounded font-mono border border-slate-950/15">⏎</kbd>
           </button>
         </div>
       </div>
@@ -1282,6 +1407,7 @@
         {/if}
 
         <textarea
+          disabled={isThinking || pendingPermissions.length > 0}
           placeholder="Envoyez un message à votre agent..."
           bind:value={inputMessage}
           bind:this={textareaElement}
@@ -1303,7 +1429,7 @@
           <button
             type="button"
             onclick={sendMessage}
-            disabled={!inputMessage.trim() && attachedFiles.length === 0}
+            disabled={(!inputMessage.trim() && attachedFiles.length === 0) || pendingPermissions.length > 0}
             class="p-2.5 text-white rounded-full transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed no-drag shrink-0 flex items-center justify-center shadow-md hover:scale-105
               {currentMode === 'agent' 
                 ? 'bg-indigo-600 hover:bg-indigo-500' 
@@ -1342,6 +1468,26 @@
             variant="text"
             onSelect={handleSelectModel} 
           />
+        {/if}
+
+        {#if subagentsGlobalEnabled}
+          <span class="text-slate-800">|</span>
+          <button
+            type="button"
+            onclick={toggleSubagentsChatEnabled}
+            class="transition-colors cursor-pointer flex items-center justify-center gap-1.5 text-[11px] font-medium
+              {subagentsChatEnabled 
+                ? 'text-indigo-450 hover:text-indigo-400' 
+                : 'text-slate-500 hover:text-slate-400'
+              }"
+            title={subagentsChatEnabled 
+              ? "Sous-agents activés pour cette discussion (cliquez pour désactiver)" 
+              : "Sous-agents désactivés pour cette discussion (cliquez pour activer)"
+            }
+          >
+            <span>🤖</span>
+            <span class="font-mono text-[10px]">{subagentsChatEnabled ? 'On' : 'Off'}</span>
+          </button>
         {/if}
 
         <span class="text-slate-800">|</span>

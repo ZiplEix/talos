@@ -6,13 +6,15 @@ import fsPromises from 'fs/promises';
 import { existsSync, readFileSync } from 'fs';
 import { initDb, getChats, createChat, deleteChat, renameChat, updateChatMode, getChatMode, getProviders, saveProvider, deleteProvider, getModels, addModel, deleteModel, getMessages, addMessage, saveMessages, getSetting, setSetting, getDbPath } from './db';
 import { getOpenAITools, getOpenAIToolsForMode, executeTool, getToolParamValue, isCommandSafe, getToolPath, isPathAllowed } from './tools';
-import { getSystemPrompt } from './prompts';
+import { getSystemPrompt, getSubAgentPrompt } from './prompts';
 import { TEMPLATE_VARIABLES, TEMPLATE_SYNTAX_HELP } from './promptVariables';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
+
+const pendingPermissions = new Map<string, (approved: boolean) => void>();
 
 function askUserPermission(
   window: BrowserWindow | null,
@@ -23,6 +25,7 @@ function askUserPermission(
     command?: string;
     path?: string;
     actionDescription: string;
+    agentName?: string;
   }
 ): Promise<boolean> {
   return new Promise((resolve) => {
@@ -31,17 +34,25 @@ function askUserPermission(
       return;
     }
 
+    const permissionId = Math.random().toString(36).substring(2, 9);
+    pendingPermissions.set(permissionId, resolve);
+
     // Send the request to the Svelte UI
-    window.webContents.send('security:request-permission', data);
-
-    // Wait for the response from the user (via IPC once)
-    const onResponse = (_event: any, approved: boolean) => {
-      resolve(approved);
-    };
-
-    ipcMain.once('security:response-permission', onResponse);
+    window.webContents.send('security:request-permission', {
+      ...data,
+      permissionId
+    });
   });
 }
+
+// Global response handler for permission requests
+ipcMain.on('security:response-permission', (_event, permissionId: string, approved: boolean) => {
+  const resolve = pendingPermissions.get(permissionId);
+  if (resolve) {
+    resolve(approved);
+    pendingPermissions.delete(permissionId);
+  }
+});
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -370,8 +381,11 @@ ipcMain.on('openai:chat-stream-stop', (_, chatId: string) => {
     active.abort();
     console.log(`[IPC] Aborted stream for chat: ${chatId}`);
   }
-  // Cancel any pending security approval immediately
-  ipcMain.emit('security:response-permission', null, false);
+  // Cancel all pending security approvals immediately
+  for (const [permissionId, resolve] of pendingPermissions.entries()) {
+    resolve(false);
+    pendingPermissions.delete(permissionId);
+  }
 });
 
 function parseMessageContent(text: string): any {
@@ -426,6 +440,186 @@ function parseMessageContent(text: string): any {
   return parts.length > 1 ? parts : text;
 }
 
+async function runSubAgent(
+  agentName: string,
+  mission: string,
+  chatId: string,
+  providerId: string,
+  model: string,
+  tools: any[],
+  window: BrowserWindow | null
+): Promise<string> {
+  try {
+    const providersList = await getProviders();
+    const provider = providersList.find(p => p.id === providerId);
+    if (!provider) {
+      throw new Error(`Provider introuvable : ${providerId}`);
+    }
+
+    let baseUrl = provider.base_url;
+    if (providerId === 'ollama' && !baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) {
+      baseUrl = baseUrl.replace(/\/$/, '') + '/v1';
+    }
+
+    const client = new OpenAI({
+      apiKey: provider.api_key || 'dummy-key',
+      baseURL: baseUrl,
+    });
+
+    const promptContent = await getSubAgentPrompt(agentName, mission, chatId);
+    const subAgentMemory: any[] = [
+      {
+        role: 'system',
+        content: promptContent
+      }
+    ];
+
+    let isDone = false;
+    let finalReport = '';
+    let stepsCount = 0;
+    const maxSteps = 15; // Sécurité contre les boucles infinies
+
+    // Notifier le frontend que ce sous-agent démarre
+    window?.webContents.send('openai:sub-agent-status', {
+      chatId,
+      agent_name: agentName,
+      status: 'Initialisation...',
+      isDone: false
+    });
+
+    while (!isDone && stepsCount < maxSteps) {
+      stepsCount++;
+      
+      window?.webContents.send('openai:sub-agent-status', {
+        chatId,
+        agent_name: agentName,
+        status: 'Réflexion...',
+        isDone: false
+      });
+
+      const response = await client.chat.completions.create({
+        model: model,
+        messages: subAgentMemory,
+        tools: tools.length > 0 ? tools : undefined
+      });
+
+      const message = response.choices[0].message;
+      subAgentMemory.push(message);
+
+      if (message.tool_calls && message.tool_calls.length > 0) {
+        for (const tc of message.tool_calls) {
+          window?.webContents.send('openai:sub-agent-status', {
+            chatId,
+            agent_name: agentName,
+            status: `Appel de l'outil : ${tc.function.name}...`,
+            isDone: false
+          });
+
+          let args: any = {};
+          try {
+            args = JSON.parse(tc.function.arguments);
+          } catch (e) {}
+
+          let toolResult = '';
+          let isBlocked = false;
+
+          // Sécurités
+          if (tc.function.name === 'Bash') {
+            const command = args.command || '';
+            if (!isCommandSafe(command)) {
+              toolResult = "error: Command execution blocked by security guardrails (forbidden pattern).";
+              isBlocked = true;
+            } else {
+              const approved = await askUserPermission(window, {
+                chatId,
+                type: 'bash',
+                toolName: 'Bash',
+                command: command,
+                actionDescription: `Commande demandée par le sous-agent ${agentName} : ${command}`,
+                agentName: agentName
+              });
+              if (!approved) {
+                toolResult = "error: User rejected the execution of this Bash command.";
+                isBlocked = true;
+              }
+            }
+          } else {
+            const targetPath = getToolPath(tc.function.name, args);
+            if (targetPath) {
+              const allowed = isPathAllowed(targetPath, chatId);
+              if (!allowed) {
+                const approved = await askUserPermission(window, {
+                  chatId,
+                  type: 'file_access',
+                  toolName: tc.function.name,
+                  path: targetPath,
+                  actionDescription: `Accès hors espace de travail demandé par le sous-agent ${agentName} (${tc.function.name}) : ${targetPath}`,
+                  agentName: agentName
+                });
+                if (!approved) {
+                  toolResult = `error: User rejected access to this path.`;
+                  isBlocked = true;
+                }
+              }
+            }
+          }
+
+          if (!isBlocked) {
+            toolResult = await executeTool(tc.function.name, args, chatId);
+          }
+
+          subAgentMemory.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: toolResult
+          });
+        }
+      } else {
+        finalReport = message.content || 'Aucun rapport fourni.';
+        isDone = true;
+      }
+    }
+
+    if (stepsCount >= maxSteps) {
+      finalReport = `Le sous-agent a été arrêté car il a atteint la limite de ${maxSteps} étapes.`;
+    }
+
+    window?.webContents.send('openai:sub-agent-status', {
+      chatId,
+      agent_name: agentName,
+      status: 'Terminé',
+      isDone: true
+    });
+
+    return `### Rapport de ${agentName}\n\n**Mission** : ${mission}\n\n**Résultat** :\n${finalReport}`;
+  } catch (err: any) {
+    console.error(`[SubAgent ${agentName}] Error:`, err);
+    window?.webContents.send('openai:sub-agent-status', {
+      chatId,
+      agent_name: agentName,
+      status: `Erreur : ${err.message}`,
+      isDone: true,
+      error: err.message
+    });
+    return `### Rapport de ${agentName}\n\n**Mission** : ${mission}\n\n**Erreur** :\n${err.message}`;
+  }
+}
+
+async function executeParallelAgents(
+  tasks: any[],
+  chatId: string,
+  providerId: string,
+  model: string,
+  tools: any[],
+  window: BrowserWindow | null
+): Promise<string> {
+  const agentPromises = tasks.map((task) =>
+    runSubAgent(task.agent_name, task.mission, chatId, providerId, model, tools, window)
+  );
+  const results = await Promise.all(agentPromises);
+  return results.join('\n\n---\n\n');
+}
+
 // Handler pour le streaming d'appels d'API OpenAI / Ollama avec exécution automatique d'outils
 ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: string, chatMessages: any[], chatId: string, requestId: string) => {
   let currentRequestId = requestId;
@@ -468,9 +662,16 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
 
     // Récupérer le mode du chat et compiler le prompt système associé
     const mode = await getChatMode(chatId);
-    const systemPrompt = await getSystemPrompt(mode);
+    const systemPrompt = await getSystemPrompt(mode, chatId);
     console.log(`[Prompt Manager] Final system prompt for chat ${chatId} (mode: ${mode}):\n========================================\n${systemPrompt}\n========================================`);
-    const toolsForMode = getOpenAIToolsForMode(mode);
+    const globalSubagentsEnabled = (await getSetting('subagents_enabled', 'true')) === 'true';
+    const chatSubagentsEnabled = (await getSetting(`chat_${chatId}_subagents_enabled`, 'true')) === 'true';
+    const subagentsAllowed = globalSubagentsEnabled && chatSubagentsEnabled;
+
+    let toolsForMode = getOpenAIToolsForMode(mode);
+    if (!subagentsAllowed) {
+      toolsForMode = toolsForMode.filter(t => t.function.name !== 'run_parallel_agents');
+    }
 
     // Assainir l'historique et injecter le prompt système
     const apiMessages = [
@@ -608,8 +809,23 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
           let result = '';
           let isBlocked = false;
 
-          // ── Security Interception ─────────────────────────────────────────
-          if (tc.function.name === 'Bash') {
+          // ── Security & Tool Interception ──────────────────────────────────
+          if (tc.function.name === 'run_parallel_agents') {
+            const tasks = args.tasks || [];
+            console.log(`[Parallel Agents] Starting parallel execution for ${tasks.length} tasks...`);
+            
+            // Notify Svelte of parallel tasks start
+            mainWindow?.webContents.send('openai:sub-agents-started', {
+              chatId,
+              tasks
+            });
+
+            // Filter out run_parallel_agents to prevent subagents from spawning nested subagents
+            const subTools = toolsForMode.filter(t => t.function.name !== 'run_parallel_agents');
+            
+            result = await executeParallelAgents(tasks, chatId, providerId, model, subTools, mainWindow);
+            isBlocked = true;
+          } else if (tc.function.name === 'Bash') {
             const command = args.command || '';
             
             // 1. Guardrail blacklist check

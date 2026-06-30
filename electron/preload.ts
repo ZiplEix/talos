@@ -74,14 +74,30 @@ contextBridge.exposeInMainWorld("talosAPI", {
   getTemplateVariables: () => ipcRenderer.invoke('prompts:template-variables'),
   saveMedia: (chatId: string, filename: string, base64Data: string) => ipcRenderer.invoke('chat:save-media', chatId, filename, base64Data),
   
-  onSecurityRequestPermission: (callback: (data: { chatId: string; type: 'bash' | 'file_access'; toolName: string; command?: string; path?: string; actionDescription: string }) => void) => {
+  onSecurityRequestPermission: (callback: (data: { permissionId: string; chatId: string; type: 'bash' | 'file_access'; toolName: string; command?: string; path?: string; actionDescription: string; agentName?: string }) => void) => {
     const subscription = (_event: any, data: any) => callback(data);
     ipcRenderer.on('security:request-permission', subscription);
     return () => {
       ipcRenderer.off('security:request-permission', subscription);
     };
   },
-  respondSecurityPermission: (approved: boolean) => ipcRenderer.send('security:response-permission', approved),
+  respondSecurityPermission: (permissionId: string, approved: boolean) => ipcRenderer.send('security:response-permission', permissionId, approved),
   generateChatTitle: (chatId: string, firstMessage: string, providerId: string, model: string) => 
     ipcRenderer.invoke('chat:generate-title', chatId, firstMessage, providerId, model),
+  
+  onSubAgentsStarted: (callback: (data: { chatId: string; tasks: Array<{ agent_name: string; mission: string }> }) => void) => {
+    const subscription = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('openai:sub-agents-started', subscription);
+    return () => {
+      ipcRenderer.off('openai:sub-agents-started', subscription);
+    };
+  },
+
+  onSubAgentStatus: (callback: (data: { chatId: string; agent_name: string; status: string; isDone: boolean; error?: string }) => void) => {
+    const subscription = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('openai:sub-agent-status', subscription);
+    return () => {
+      ipcRenderer.off('openai:sub-agent-status', subscription);
+    };
+  },
 });

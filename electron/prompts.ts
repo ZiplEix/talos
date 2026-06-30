@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { getOpenAIToolsForMode } from './tools';
-import { getDbPath } from './db';
+import { getDbPath, getSetting } from './db';
 
 const PROMPTS_DIR = path.join(getDbPath(), 'prompts');
 
@@ -74,7 +74,17 @@ export async function getSystemPrompt(mode: string, chatId?: string): Promise<st
     }
 
     // Retrieve active tools for this specific mode
-    const tools = getOpenAIToolsForMode(mode);
+    const globalSubagentsEnabled = (await getSetting('subagents_enabled', 'true')) === 'true';
+    const chatSubagentsEnabled = chatId 
+      ? (await getSetting(`chat_${chatId}_subagents_enabled`, 'true')) === 'true'
+      : true;
+    const subagentsAllowed = globalSubagentsEnabled && chatSubagentsEnabled;
+
+    let tools = getOpenAIToolsForMode(mode);
+    if (!subagentsAllowed) {
+      tools = tools.filter(t => t.function.name !== 'run_parallel_agents');
+    }
+
     const toolsData = tools.map(t => ({
       name: t.function.name,
       description: t.function.description
@@ -97,5 +107,32 @@ export async function getSystemPrompt(mode: string, chatId?: string): Promise<st
   } catch (error) {
     console.error('Error constructing system prompt:', error);
     return `You are Talos, a software engineering agent. CWD: ${process.cwd()}`;
+  }
+}
+
+export async function getSubAgentPrompt(agentName: string, mission: string, chatId: string): Promise<string> {
+  try {
+    const subAgentPromptPath = path.join(PROMPTS_DIR, 'subagent.md');
+    let content = '';
+    if (existsSync(subAgentPromptPath)) {
+      content = await fs.readFile(subAgentPromptPath, 'utf-8');
+    } else {
+      content = `# Role and Context\nYou are Talos-{{agentName}}, a specialized, highly efficient, and secure autonomous sub-agent.\n- **Current Working Directory (CWD)**: \`{{currentCwd}}\`\n- **Private Chat/Artifacts Directory**: \`{{chatFolder}}\`\n\n# Mission\n"{{mission}}"`;
+    }
+
+    const chatsDir = path.join(getDbPath(), 'chats');
+    const chatFolder = chatId ? path.join(chatsDir, chatId) : '';
+
+    const data = {
+      agentName,
+      mission,
+      currentCwd: process.cwd(),
+      chatFolder
+    };
+
+    return renderTemplate(content, data);
+  } catch (error) {
+    console.error('Error constructing sub-agent prompt:', error);
+    return `You are Talos-${agentName}. CWD: ${process.cwd()}. Mission: ${mission}`;
   }
 }
