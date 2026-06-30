@@ -21,7 +21,11 @@
 			"output": "dist"
 		},
 		"win": {
-			"target": ["nsis", "portable"]
+			"target": ["nsis"]
+		},
+		"linux": {
+			"target": ["AppImage", "deb"],
+			"category": "Utility"
 		}
 	},
 	"devDependencies": {
