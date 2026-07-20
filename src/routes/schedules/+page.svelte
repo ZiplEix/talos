@@ -20,6 +20,8 @@
     model: string;
     workspace?: string;
     internet_access: boolean;
+    allow_email?: boolean;
+    email_recipients?: string;
     enabled: boolean;
     created_at: number;
     updated_at: number;
@@ -45,6 +47,8 @@
   let modalModel = $state('');
   let modalWorkspace = $state('');
   let modalInternet = $state(false);
+  let modalAllowEmail = $state(false);
+  let modalEmailRecipients = $state('');
   let modalError = $state('');
 
   let providersList = $state<Array<{ id: string; name: string }>>([]);
@@ -131,6 +135,8 @@
     modalInstructions = '';
     modalWorkspace = '';
     modalInternet = false;
+    modalAllowEmail = false;
+    modalEmailRecipients = '';
     modalProvider = providersList[0]?.id || '';
     modalModel = '';
     modalError = '';
@@ -147,6 +153,8 @@
     modalInstructions = task.instructions;
     modalWorkspace = task.workspace || '';
     modalInternet = task.internet_access ?? false;
+    modalAllowEmail = task.allow_email ?? false;
+    modalEmailRecipients = task.email_recipients || '';
     modalProvider = task.provider_id;
     modalModel = task.model;
     modalError = '';
@@ -183,6 +191,10 @@
       modalError = 'Veuillez sélectionner un modèle.';
       return;
     }
+    if (modalAllowEmail && !modalEmailRecipients.trim()) {
+      modalError = "Veuillez renseigner au moins un destinataire pour les e-mails.";
+      return;
+    }
 
     const taskId = editingTask?.id || Math.random().toString(36).substring(2, 9);
 
@@ -197,6 +209,8 @@
       model: modalModel,
       workspace: modalWorkspace.trim() || undefined,
       internet_access: modalInternet,
+      allow_email: modalAllowEmail,
+      email_recipients: modalEmailRecipients.trim() || undefined,
       enabled: editingTask?.enabled ?? true,
       created_at: editingTask?.created_at ?? Date.now(),
       updated_at: Date.now(),
@@ -362,10 +376,13 @@
                 {#if task.internet_access}
                   <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border border-sky-500/20 bg-sky-950/10 text-sky-400">🌐 Internet</span>
                 {/if}
+                {#if task.allow_email}
+                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border border-amber-500/20 bg-amber-950/10 text-amber-400">✉️ E-mail</span>
+                {/if}
                 {#if task.workspace}
                   <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-500/20 bg-emerald-950/10 text-emerald-400">📁 Workspace</span>
                 {/if}
-                {#if !task.internet_access && !task.workspace}
+                {#if !task.internet_access && !task.workspace && !task.allow_email}
                   <span class="text-[10px] text-slate-600 italic">Réponse simple sans outils</span>
                 {/if}
               </div>
@@ -592,6 +609,38 @@
               ></span>
             </button>
           </div>
+
+          <!-- Email Access Toggle -->
+          <div class="flex items-center justify-between border-t border-slate-800/40 pt-3">
+            <div class="space-y-0.5">
+              <h3 class="text-sm font-semibold text-slate-300">Autoriser l'envoi d'e-mails</h3>
+              <p class="text-[11px] text-slate-500">Permet à l'agent d'utiliser l'outil SendEmail pour envoyer des messages.</p>
+            </div>
+            <button
+              type="button"
+              onclick={() => modalAllowEmail = !modalAllowEmail}
+              class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none
+                {modalAllowEmail ? 'bg-indigo-600' : 'bg-slate-700'}"
+            >
+              <span
+                class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out
+                  {modalAllowEmail ? 'translate-x-4' : 'translate-x-0'}"
+              ></span>
+            </button>
+          </div>
+
+          {#if modalAllowEmail}
+            <div class="space-y-1.5 border-t border-slate-800/40 pt-3">
+              <label class="text-xs font-bold text-slate-400 uppercase tracking-wider">Destinataires des e-mails</label>
+              <p class="text-[11px] text-slate-500 mb-2">Adresses e-mail de destination, séparées par des virgules.</p>
+              <input
+                type="text"
+                bind:value={modalEmailRecipients}
+                placeholder="destinataire1@mail.com, destinataire2@mail.com"
+                class="w-full bg-slate-950/60 border border-slate-800/80 focus:border-indigo-500/40 rounded-xl px-4 py-2.5 text-sm text-slate-200 placeholder-slate-600 outline-none transition-all font-mono"
+              />
+            </div>
+          {/if}
 
           <!-- Workspace (dossier de travail) -->
           <div class="space-y-1.5 border-t border-slate-800/40 pt-3">

@@ -3,8 +3,10 @@ import path from 'path';
 import readline from 'readline';
 import { exec } from 'child_process';
 import ignore from 'ignore';
-import { BrowserWindow } from 'electron';
-import { getDbPath } from './db';
+import { BrowserWindow, app } from 'electron';
+import { getDbPath, getSetting } from './db';
+import nodemailer from 'nodemailer';
+import { marked } from 'marked';
 
 export function isRestrictedPath(filePath: string): boolean {
   try {
@@ -252,6 +254,81 @@ export function handleListTool(args: any): string {
     return JSON.stringify(entries);
   } catch (err: any) {
     return `error listing directory: ${err.message}`;
+  }
+}
+
+// Handler: Send an e-mail using configured SMTP credentials to predefined recipients
+export async function handleSendEmailTool(args: any, chatId?: string): Promise<string> {
+  const { subject, body } = args;
+  if (!subject || !body) {
+    return 'error: parameters subject and body are required';
+  }
+
+  let recipients = '';
+
+  if (chatId) {
+    // 1. Check if this is running for a scheduled task
+    try {
+      const { getSchedules } = require('./db');
+      const schedules = await getSchedules();
+      const task = schedules.find((s: any) => s.chat_id === chatId);
+      if (task) {
+        recipients = task.email_recipients || '';
+      }
+    } catch (e) {
+      console.error('[Email Tool] Error reading schedules to resolve recipient:', e);
+    }
+
+    // 2. If not a task, or task didn't specify recipients, fall back to chat setting
+    if (!recipients) {
+      recipients = await getSetting(`chat_${chatId}_email_recipients`, '');
+    }
+  }
+
+  if (!recipients) {
+    return "error: Email recipients are not configured for this discussion/task. Please specify the recipient email addresses in the configuration.";
+  }
+
+  try {
+    const smtpHost = await getSetting('smtp_host', '');
+    const smtpPort = await getSetting('smtp_port', '587');
+    const smtpUser = await getSetting('smtp_user', '');
+    const smtpPass = await getSetting('smtp_pass', '');
+    const smtpFrom = await getSetting('smtp_from', 'talos@app.com');
+    const smtpSecure = await getSetting('smtp_secure', 'false') === 'true';
+
+    if (!smtpHost) {
+      return "error: SMTP is not configured. Please configure SMTP credentials in the Settings page to send real emails.";
+    }
+
+    const portNumber = parseInt(smtpPort, 10);
+
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: portNumber,
+      secure: smtpSecure,
+      auth: smtpUser && smtpPass ? {
+        user: smtpUser,
+        pass: smtpPass
+      } : undefined
+    });
+
+    // Parse text body as Markdown/HTML to support styled rich-text emails
+    const htmlBody = await marked.parse(body);
+
+    const info = await transporter.sendMail({
+      from: smtpFrom,
+      to: recipients,
+      subject: subject,
+      text: body,
+      html: htmlBody
+    });
+
+    console.log(`[Email Tool] Email successfully sent: ${info.messageId}`);
+    return `success: Email sent successfully to ${recipients} (MessageID: ${info.messageId})`;
+  } catch (error: any) {
+    console.error('Error in SendEmail tool:', error);
+    return `error: Failed to send email: ${error.message}`;
   }
 }
 
@@ -907,6 +984,8 @@ export async function executeTool(name: string, args: any, chatId?: string): Pro
       return handleReplaceInArtifact(args, chatId);
     case 'ListArtifacts':
       return handleListArtifacts(args, chatId);
+    case 'SendEmail':
+      return await handleSendEmailTool(args, chatId);
     default:
       return `error: unknown tool call ${name}`;
   }
@@ -1260,12 +1339,34 @@ export function getOpenAITools() {
           required: ['tasks']
         }
       }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'SendEmail',
+        description: "Envoie un e-mail avec un sujet et un corps de texte à des destinataires prédéfinis. Cet outil n'est utilisable que s'il a été explicitement autorisé.",
+        parameters: {
+          type: 'object',
+          properties: {
+            subject: {
+              type: 'string',
+              description: "L'objet / le sujet de l'e-mail."
+            },
+            body: {
+              type: 'string',
+              description: "Le corps du message (texte brut)."
+            }
+          },
+          required: ['subject', 'body']
+        }
+      }
     }
   ];
 }
 
 export function getOpenAIToolsForMode(mode: string): any[] {
-  const tools = getOpenAITools();
+  // Exclude SendEmail from all standard chat loops. It's only for scheduled tasks.
+  const tools = getOpenAITools().filter(t => t.function.name !== 'SendEmail');
   if (mode === 'agent') {
     return tools;
   }

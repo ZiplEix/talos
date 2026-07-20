@@ -25,7 +25,8 @@ contextBridge.exposeInMainWorld("talosAPI", {
   setSetting: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value),
   
   getCwd: () => ipcRenderer.invoke('cwd:get'),
-  selectCwd: () => ipcRenderer.invoke('cwd:select'),
+  selectCwd: (chatId?: string) => ipcRenderer.invoke('cwd:select', chatId),
+  setCwd: (path: string) => ipcRenderer.invoke('cwd:set', path),
   
   chat: (providerId: string, model: string, chatMessages: any[]) => ipcRenderer.invoke('openai:chat', providerId, model, chatMessages),
   

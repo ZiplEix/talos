@@ -36,6 +36,7 @@
 		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
 		"@tailwindcss/vite": "^4.3.0",
+		"@types/nodemailer": "^8.0.1",
 		"electron": "^42.5.0",
 		"electron-builder": "^26.15.3",
 		"svelte": "^5.56.1",
@@ -49,6 +50,7 @@
 		"ignore": "^7.0.5",
 		"lucide-svelte": "^1.0.1",
 		"marked": "^18.0.5",
+		"nodemailer": "^9.0.3",
 		"openai": "^6.45.0"
 	}
 }

@@ -266,11 +266,53 @@ export async function saveMessages(chatId: string, messages: any[]): Promise<voi
 // ==========================================
 
 export async function getSetting(key: string, defaultValue: string): Promise<string> {
+  // Check if this setting is chat-specific by checking if it matches an existing chat ID prefix
+  try {
+    const entries = await fs.readdir(CHATS_DIR, { withFileTypes: true });
+    const chatIds = entries.filter(entry => entry.isDirectory()).map(entry => entry.name);
+    for (const id of chatIds) {
+      const prefix = `chat_${id}_`;
+      if (key.startsWith(prefix)) {
+        const subKey = key.substring(prefix.length);
+        const metadataPath = path.join(CHATS_DIR, id, 'metadata.json');
+        if (existsSync(metadataPath)) {
+          const metadata = await readJsonFile<any>(metadataPath, {});
+          if (metadata && metadata[subKey] !== undefined) {
+            return String(metadata[subKey]);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error checking chat-specific settings in getSetting:', err);
+  }
+
   const settings = await readJsonFile<Record<string, string>>(SETTINGS_FILE, {});
   return settings[key] !== undefined ? settings[key] : defaultValue;
 }
 
 export async function setSetting(key: string, value: string): Promise<void> {
+  // Check if this setting is chat-specific by checking if it matches an existing chat ID prefix
+  try {
+    const entries = await fs.readdir(CHATS_DIR, { withFileTypes: true });
+    const chatIds = entries.filter(entry => entry.isDirectory()).map(entry => entry.name);
+    for (const id of chatIds) {
+      const prefix = `chat_${id}_`;
+      if (key.startsWith(prefix)) {
+        const subKey = key.substring(prefix.length);
+        const metadataPath = path.join(CHATS_DIR, id, 'metadata.json');
+        if (existsSync(metadataPath)) {
+          const metadata = await readJsonFile<any>(metadataPath, {});
+          metadata[subKey] = value;
+          await writeJsonFile(metadataPath, metadata);
+          return;
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error writing chat-specific settings in setSetting:', err);
+  }
+
   const settings = await readJsonFile<Record<string, string>>(SETTINGS_FILE, {});
   settings[key] = value;
   await writeJsonFile(SETTINGS_FILE, settings);
@@ -357,6 +399,8 @@ export interface ScheduledTask {
   model: string;
   workspace?: string;              // dossier de travail optionnel (CWD pour l'exécution)
   internet_access: boolean;        // accès aux outils internet (FetchWebPage, BrowseWebPage, GoogleSearch)
+  allow_email?: boolean;           // autorisation d'envoyer des e-mails
+  email_recipients?: string;       // destinataires des e-mails
   enabled: boolean;
   created_at: number;
   updated_at: number;

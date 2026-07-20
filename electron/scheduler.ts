@@ -91,25 +91,33 @@ export function computeNextRun(task: ScheduledTask): number | null {
 
 function getToolsForTask(task: ScheduledTask): any[] {
   const allTools = getOpenAITools();
-
-  if (!task.internet_access && !task.workspace) {
-    // Aucun outil
-    return [];
-  }
-
-  if (task.internet_access && !task.workspace) {
-    // Internet seulement : outils web + artifacts (toujours disponibles)
-    const allowed = new Set(['FetchWebPage', 'BrowseWebPage', 'GoogleSearch',
-      'WriteArtifact', 'ReadArtifact', 'ReplaceInArtifact', 'ListArtifacts']);
-    return allTools.filter(t => allowed.has(t.function.name));
-  }
+  let allowedTools: any[] = [];
 
   if (task.workspace) {
     // Workspace : tous les outils sauf run_parallel_agents
-    return allTools.filter(t => t.function.name !== 'run_parallel_agents');
+    allowedTools = allTools.filter(t => t.function.name !== 'run_parallel_agents');
+  } else if (task.internet_access) {
+    // Internet seulement : outils web + artifacts
+    const allowed = new Set(['FetchWebPage', 'BrowseWebPage', 'GoogleSearch',
+      'WriteArtifact', 'ReadArtifact', 'ReplaceInArtifact', 'ListArtifacts']);
+    allowedTools = allTools.filter(t => allowed.has(t.function.name));
+  } else {
+    // Aucun outil par défaut
+    allowedTools = [];
   }
 
-  return [];
+  // Si allow_email est activé, s'assurer que SendEmail est inclus dans allowedTools
+  if (task.allow_email) {
+    const sendEmailTool = allTools.find(t => t.function.name === 'SendEmail');
+    if (sendEmailTool && !allowedTools.some(t => t.function.name === 'SendEmail')) {
+      allowedTools.push(sendEmailTool);
+    }
+  } else {
+    // Sinon, on s'assure qu'il est exclu
+    allowedTools = allowedTools.filter(t => t.function.name !== 'SendEmail');
+  }
+
+  return allowedTools;
 }
 
 // ── Exécution d'une tâche (avec ou sans outils) ───────────────────────────

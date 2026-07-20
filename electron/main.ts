@@ -379,7 +379,7 @@ ipcMain.handle('cwd:get', () => {
   return process.cwd();
 });
 
-ipcMain.handle('cwd:select', async () => {
+ipcMain.handle('cwd:select', async (_, chatId) => {
   const result = await dialog.showOpenDialog({
     properties: ['openDirectory'],
     title: 'Choisir le dossier de travail'
@@ -388,12 +388,27 @@ ipcMain.handle('cwd:select', async () => {
   const selectedPath = result.filePaths[0];
   try {
     process.chdir(selectedPath);
-    await setSetting('talos_cwd', selectedPath);
+    if (chatId) {
+      await setSetting(`chat_${chatId}_cwd`, selectedPath);
+    } else {
+      await setSetting('talos_cwd', selectedPath);
+    }
     console.log('Working directory changed to:', selectedPath);
   } catch (err) {
     console.error('Failed to change process directory:', err);
   }
   return selectedPath;
+});
+
+ipcMain.handle('cwd:set', (_, newPath) => {
+  try {
+    process.chdir(newPath);
+    console.log(`Working directory changed to: ${newPath}`);
+    return true;
+  } catch (err) {
+    console.error(`Failed to change directory to ${newPath}:`, err);
+    return false;
+  }
 });
 
 // Handler pour l'exécution d'appels d'API OpenAI / Ollama
@@ -723,6 +738,15 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
       toolsForMode = toolsForMode.filter(t => t.function.name !== 'run_parallel_agents');
     }
 
+    const chatEmailEnabled = (await getSetting(`chat_${chatId}_email_enabled`, 'false')) === 'true';
+    if (chatEmailEnabled) {
+      const allTools = getOpenAITools();
+      const sendEmailTool = allTools.find(t => t.function.name === 'SendEmail');
+      if (sendEmailTool && !toolsForMode.some(t => t.function.name === 'SendEmail')) {
+        toolsForMode.push(sendEmailTool);
+      }
+    }
+
     // Assainir l'historique et injecter le prompt système
     const apiMessages = [
       { role: 'system', content: systemPrompt },
@@ -873,7 +897,20 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
             // Filter out run_parallel_agents to prevent subagents from spawning nested subagents
             const subTools = toolsForMode.filter(t => t.function.name !== 'run_parallel_agents');
             
-            result = await executeParallelAgents(tasks, chatId, providerId, model, subTools, mainWindow);
+            let subProviderId = await getSetting(`chat_${chatId}_subagents_provider_id`, '');
+            let subModel = await getSetting(`chat_${chatId}_subagents_model_name`, '');
+            
+            if (!subProviderId) {
+              subProviderId = await getSetting('default_subagents_provider_id', '');
+            }
+            if (!subModel) {
+              subModel = await getSetting('default_subagents_model_name', '');
+            }
+
+            const finalSubProviderId = subProviderId || providerId;
+            const finalSubModel = subModel || model;
+            
+            result = await executeParallelAgents(tasks, chatId, finalSubProviderId, finalSubModel, subTools, mainWindow);
             isBlocked = true;
           } else if (tc.function.name === 'Bash') {
             const command = args.command || '';

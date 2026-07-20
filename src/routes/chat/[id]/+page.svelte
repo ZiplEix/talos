@@ -76,6 +76,11 @@
   // Paramètres d'activation des sous-agents (global et par chat)
   let subagentsGlobalEnabled = $state(true);
   let subagentsChatEnabled = $state(true);
+  let subagentsProviderId = $state('ollama');
+  let subagentsModel = $state('');
+  let emailChatEnabled = $state(false);
+  let showEmailPopover = $state(false);
+  let emailChatRecipients = $state('');
 
   function handlePermission(permissionId: string, approved: boolean) {
     if (window.talosAPI) {
@@ -88,6 +93,32 @@
     subagentsChatEnabled = !subagentsChatEnabled;
     if (window.talosAPI) {
       await window.talosAPI.setSetting(`chat_${chatId}_subagents_enabled`, String(subagentsChatEnabled));
+    }
+  }
+
+  async function toggleEmailChatEnabled() {
+    emailChatEnabled = !emailChatEnabled;
+    if (window.talosAPI) {
+      await window.talosAPI.setSetting(`chat_${chatId}_email_enabled`, String(emailChatEnabled));
+    }
+  }
+
+  function toggleEmailPopover() {
+    showEmailPopover = !showEmailPopover;
+  }
+
+  async function handleSaveEmailRecipients() {
+    if (window.talosAPI) {
+      await window.talosAPI.setSetting(`chat_${chatId}_email_recipients`, emailChatRecipients.trim());
+    }
+  }
+
+  async function handleSelectSubagentsModel(providerId: string, modelName: string) {
+    subagentsProviderId = providerId;
+    subagentsModel = modelName;
+    if (window.talosAPI) {
+      await window.talosAPI.setSetting(`chat_${chatId}_subagents_provider_id`, providerId);
+      await window.talosAPI.setSetting(`chat_${chatId}_subagents_model_name`, modelName);
     }
   }
 
@@ -212,8 +243,8 @@
     if (window.talosAPI) {
       try {
         cwd = await window.talosAPI.getCwd();
-        activeProviderId = await window.talosAPI.getSetting('active_provider_id', 'ollama');
-        activeModel = await window.talosAPI.getSetting('active_model_name', '');
+        activeProviderId = await window.talosAPI.getSetting('default_provider_id', 'ollama');
+        activeModel = await window.talosAPI.getSetting('default_model_name', '');
         subagentsGlobalEnabled = (await window.talosAPI.getSetting('subagents_enabled', 'true')) === 'true';
       } catch (err) {
         console.error(err);
@@ -238,15 +269,61 @@
     attachedFiles = [];
     attachedFileObjects = [];
 
-    // Charger le statut d'activation des sous-agents pour ce chat
+    // Charger le statut d'activation des sous-agents et leur modèle pour ce chat
     if (window.talosAPI) {
       try {
         subagentsChatEnabled = (await window.talosAPI.getSetting(`chat_${id}_subagents_enabled`, 'true')) === 'true';
+        
+        let subProviderId = await window.talosAPI.getSetting(`chat_${id}_subagents_provider_id`, '');
+        let subModelName = await window.talosAPI.getSetting(`chat_${id}_subagents_model_name`, '');
+        if (!subProviderId) {
+          subProviderId = await window.talosAPI.getSetting('default_subagents_provider_id', 'ollama');
+        }
+        if (!subModelName) {
+          subModelName = await window.talosAPI.getSetting('default_subagents_model_name', '');
+        }
+        subagentsProviderId = subProviderId;
+        subagentsModel = subModelName;
+        
+        // Charger le modèle master pour ce chat
+        let chatProviderId = await window.talosAPI.getSetting(`chat_${id}_provider_id`, '');
+        let chatModelName = await window.talosAPI.getSetting(`chat_${id}_model_name`, '');
+        if (!chatProviderId) {
+          chatProviderId = await window.talosAPI.getSetting('default_provider_id', 'ollama');
+        }
+        if (!chatModelName) {
+          chatModelName = await window.talosAPI.getSetting('default_model_name', '');
+        }
+        activeProviderId = chatProviderId;
+        activeModel = chatModelName;
+        
+        emailChatEnabled = (await window.talosAPI.getSetting(`chat_${id}_email_enabled`, 'false')) === 'true';
+        emailChatRecipients = await window.talosAPI.getSetting(`chat_${id}_email_recipients`, '');
+        showEmailPopover = false;
+
+        let chatCwd = await window.talosAPI.getSetting(`chat_${id}_cwd`, '');
+        if (!chatCwd) {
+          chatCwd = await window.talosAPI.getSetting('talos_cwd', '.');
+        }
+        cwd = chatCwd;
+        if (cwd) {
+          await window.talosAPI.setCwd(cwd);
+        }
       } catch (e) {
         subagentsChatEnabled = true;
+        subagentsProviderId = 'ollama';
+        subagentsModel = '';
+        emailChatEnabled = false;
+        emailChatRecipients = '';
+        showEmailPopover = false;
       }
     } else {
       subagentsChatEnabled = true;
+      subagentsProviderId = 'ollama';
+      subagentsModel = '';
+      emailChatEnabled = false;
+      emailChatRecipients = '';
+      showEmailPopover = false;
     }
 
     // 1. Charger le titre de la discussion
@@ -314,7 +391,7 @@
   async function selectDirectory() {
     if (window.talosAPI) {
       try {
-        const selected = await window.talosAPI.selectCwd();
+        const selected = await window.talosAPI.selectCwd(chatId);
         if (selected) {
           cwd = selected;
         }
@@ -334,11 +411,10 @@
   async function handleSelectModel(providerId: string, modelName: string) {
     activeProviderId = providerId;
     activeModel = modelName;
-    
     if (window.talosAPI) {
       try {
-        await window.talosAPI.setSetting('active_provider_id', providerId);
-        await window.talosAPI.setSetting('active_model_name', modelName);
+        await window.talosAPI.setSetting(`chat_${chatId}_provider_id`, providerId);
+        await window.talosAPI.setSetting(`chat_${chatId}_model_name`, modelName);
       } catch (err) {
         console.error(err);
       }
@@ -1490,6 +1566,78 @@
             <span>🤖</span>
             <span class="font-mono text-[10px]">{subagentsChatEnabled ? 'On' : 'Off'}</span>
           </button>
+        {/if}
+
+        <span class="text-slate-800">|</span>
+        <div class="relative flex items-center">
+          <button
+            type="button"
+            onclick={toggleEmailPopover}
+            class="transition-colors cursor-pointer flex items-center justify-center gap-1.5 text-[11px] font-medium
+              {emailChatEnabled 
+                ? 'text-amber-500 hover:text-amber-400' 
+                : 'text-slate-500 hover:text-slate-400'
+              }"
+            title="Configuration de l'outil E-mail pour cette discussion"
+          >
+            <span>✉️</span>
+            <span class="font-mono text-[10px]">{emailChatEnabled ? 'On' : 'Off'}</span>
+          </button>
+
+          {#if showEmailPopover}
+            <!-- Popover overlay to close when clicking outside -->
+            <div 
+              class="fixed inset-0 z-40 cursor-default" 
+              onclick={() => showEmailPopover = false}
+              role="presentation"
+            ></div>
+
+            <!-- Popover box -->
+            <div class="absolute bottom-full left-0 mb-2 z-50 bg-[#0f1422] border border-slate-800 rounded-xl p-4 shadow-xl w-72 space-y-3">
+              <h4 class="text-xs font-bold text-slate-350 uppercase tracking-wider">Outil E-mail (SendEmail)</h4>
+              
+              <div class="flex items-center justify-between">
+                <span class="text-xs text-slate-450 text-slate-400">Activer l'envoi de mail</span>
+                <button
+                  type="button"
+                  onclick={toggleEmailChatEnabled}
+                  title="Activer/Désactiver l'outil e-mail pour cette discussion"
+                  aria-label="Toggle email tool for this chat"
+                  class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none
+                    {emailChatEnabled ? 'bg-amber-500' : 'bg-slate-700'}"
+                >
+                  <span
+                    class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out
+                      {emailChatEnabled ? 'translate-x-4' : 'translate-x-0'}"
+                  ></span>
+                </button>
+              </div>
+
+              {#if emailChatEnabled}
+                <div class="space-y-1.5 border-t border-slate-800/40 pt-2">
+                  <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Destinataire(s)</label>
+                  <input
+                    type="text"
+                    bind:value={emailChatRecipients}
+                    onchange={handleSaveEmailRecipients}
+                    placeholder="exemple@mail.com"
+                    class="w-full bg-slate-950/60 border border-slate-800/80 focus:border-indigo-500/40 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-650 outline-none transition-all font-mono"
+                  />
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </div>
+
+        {#if subagentsGlobalEnabled && subagentsChatEnabled && !isSettingsLoading}
+          <span class="text-slate-800 select-none">|</span>
+          <span class="text-slate-500 text-[10px] select-none font-mono">subs:</span>
+          <ModelSelector 
+            bind:activeProviderId={subagentsProviderId} 
+            bind:activeModel={subagentsModel} 
+            variant="text"
+            onSelect={handleSelectSubagentsModel} 
+          />
         {/if}
 
         <span class="text-slate-800">|</span>
