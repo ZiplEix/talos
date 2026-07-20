@@ -78,6 +78,7 @@
   let subagentsChatEnabled = $state(true);
   let subagentsProviderId = $state('ollama');
   let subagentsModel = $state('');
+  let showSubagentsPopover = $state(false);
   let emailChatEnabled = $state(false);
   let showEmailPopover = $state(false);
   let emailChatRecipients = $state('');
@@ -94,6 +95,10 @@
     if (window.talosAPI) {
       await window.talosAPI.setSetting(`chat_${chatId}_subagents_enabled`, String(subagentsChatEnabled));
     }
+  }
+
+  function toggleSubagentsPopover() {
+    showSubagentsPopover = !showSubagentsPopover;
   }
 
   async function toggleEmailChatEnabled() {
@@ -300,6 +305,7 @@
         emailChatEnabled = (await window.talosAPI.getSetting(`chat_${id}_email_enabled`, 'false')) === 'true';
         emailChatRecipients = await window.talosAPI.getSetting(`chat_${id}_email_recipients`, '');
         showEmailPopover = false;
+        showSubagentsPopover = false;
 
         let chatCwd = await window.talosAPI.getSetting(`chat_${id}_cwd`, '');
         if (!chatCwd) {
@@ -313,6 +319,7 @@
         subagentsChatEnabled = true;
         subagentsProviderId = 'ollama';
         subagentsModel = '';
+        showSubagentsPopover = false;
         emailChatEnabled = false;
         emailChatRecipients = '';
         showEmailPopover = false;
@@ -321,6 +328,7 @@
       subagentsChatEnabled = true;
       subagentsProviderId = 'ollama';
       subagentsModel = '';
+      showSubagentsPopover = false;
       emailChatEnabled = false;
       emailChatRecipients = '';
       showEmailPopover = false;
@@ -1554,22 +1562,64 @@
 
         {#if subagentsGlobalEnabled}
           <span class="text-slate-800">|</span>
-          <button
-            type="button"
-            onclick={toggleSubagentsChatEnabled}
-            class="transition-colors cursor-pointer flex items-center justify-center gap-1.5 text-[11px] font-medium
-              {subagentsChatEnabled 
-                ? 'text-indigo-450 hover:text-indigo-400' 
-                : 'text-slate-500 hover:text-slate-400'
-              }"
-            title={subagentsChatEnabled 
-              ? "Sous-agents activés pour cette discussion (cliquez pour désactiver)" 
-              : "Sous-agents désactivés pour cette discussion (cliquez pour activer)"
-            }
-          >
-            <span>🤖</span>
-            <span class="font-mono text-[10px]">{subagentsChatEnabled ? 'On' : 'Off'}</span>
-          </button>
+          <div class="relative flex items-center">
+            <button
+              type="button"
+              onclick={toggleSubagentsPopover}
+              class="transition-colors cursor-pointer flex items-center justify-center gap-1.5 text-[11px] font-medium
+                {subagentsChatEnabled 
+                  ? 'text-indigo-400 hover:text-indigo-300' 
+                  : 'text-slate-500 hover:text-slate-400'
+                }"
+              title="Configuration des sous-agents pour cette discussion"
+            >
+              <span>🤖</span>
+              <span class="font-mono text-[10px]">{subagentsChatEnabled ? 'On' : 'Off'}</span>
+            </button>
+
+            {#if showSubagentsPopover}
+              <!-- Popover overlay to close when clicking outside -->
+              <div 
+                class="fixed inset-0 z-40 cursor-default" 
+                onclick={() => showSubagentsPopover = false}
+                role="presentation"
+              ></div>
+
+              <!-- Popover box -->
+              <div class="absolute bottom-full left-0 mb-2 z-50 bg-[#0f1422] border border-slate-800 rounded-xl p-4 shadow-xl w-72 space-y-3 font-medium">
+                <h4 class="text-xs font-bold text-slate-350 uppercase tracking-wider">Sous-agents (Exécution en parallèle)</h4>
+                
+                <div class="flex items-center justify-between">
+                  <span class="text-xs text-slate-455 text-slate-400">Activer les sous-agents</span>
+                  <button
+                    type="button"
+                    onclick={toggleSubagentsChatEnabled}
+                    title="Activer/Désactiver les sous-agents pour cette discussion"
+                    aria-label="Toggle sub-agents for this chat"
+                    class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none
+                      {subagentsChatEnabled ? 'bg-indigo-650 bg-indigo-600' : 'bg-slate-700'}"
+                  >
+                    <span
+                      class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out
+                        {subagentsChatEnabled ? 'translate-x-4' : 'translate-x-0'}"
+                    ></span>
+                  </button>
+                </div>
+
+                {#if subagentsChatEnabled && !isSettingsLoading}
+                  <div class="space-y-1.5 border-t border-slate-800/40 pt-2 flex items-center justify-between">
+                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Modèle</span>
+                    <ModelSelector 
+                      bind:activeProviderId={subagentsProviderId} 
+                      bind:activeModel={subagentsModel} 
+                      variant="text"
+                      onSelect={handleSelectSubagentsModel} 
+                    />
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          </div>
         {/if}
 
         <span class="text-slate-800">|</span>
@@ -1633,16 +1683,7 @@
           {/if}
         </div>
 
-        {#if subagentsGlobalEnabled && subagentsChatEnabled && !isSettingsLoading}
-          <span class="text-slate-800 select-none">|</span>
-          <span class="text-slate-500 text-[10px] select-none font-mono">subs:</span>
-          <ModelSelector 
-            bind:activeProviderId={subagentsProviderId} 
-            bind:activeModel={subagentsModel} 
-            variant="text"
-            onSelect={handleSelectSubagentsModel} 
-          />
-        {/if}
+
 
         <span class="text-slate-800">|</span>
 
