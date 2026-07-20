@@ -294,14 +294,14 @@ ipcMain.handle('prompts:reset', async (_event, name: string) => {
     const srcPromptsDir = existsSync(path.join(process.cwd(), 'prompts'))
       ? path.join(process.cwd(), 'prompts')
       : path.join(__dirname, '../prompts');
-    
+
     const srcFile = path.join(srcPromptsDir, name);
     const destFile = path.join(getDbPath(), 'prompts', name);
-    
+
     if (!existsSync(srcFile)) {
       throw new Error(`Default template for ${name} not found`);
     }
-    
+
     const content = await fsPromises.readFile(srcFile, 'utf-8');
     await fsPromises.writeFile(destFile, content, 'utf-8');
     return content;
@@ -316,11 +316,11 @@ ipcMain.handle('chat:save-media', async (_event, chatId: string, filename: strin
     const chatsDir = path.join(getDbPath(), 'chats');
     const mediaDir = path.join(chatsDir, chatId, 'media');
     await fsPromises.mkdir(mediaDir, { recursive: true });
-    
+
     const filePath = path.join(mediaDir, filename);
     const buffer = Buffer.from(base64Data, 'base64');
     await fsPromises.writeFile(filePath, buffer);
-    
+
     return `file://${filePath}`;
   } catch (error) {
     console.error('Failed to save media:', error);
@@ -365,7 +365,7 @@ User message:
     });
 
     const generatedTitle = response.choices[0].message.content?.trim().replace(/^["'«»“”]|["'«»“”]$/g, '') || 'Discussion';
-    
+
     await renameChat(chatId, generatedTitle);
     return generatedTitle;
   } catch (error) {
@@ -418,7 +418,7 @@ ipcMain.handle('openai:chat', async (_, providerId: string, model: string, chatM
   if (!provider) {
     throw new Error(`Provider introuvable : ${providerId}`);
   }
-  
+
   // S'assurer que le chemin d'Ollama finit par /v1 pour le client officiel
   let baseUrl = provider.base_url;
   if (providerId === 'ollama' && !baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) {
@@ -465,7 +465,7 @@ function parseMessageContent(text: string): any {
     if (textBefore) {
       parts.push({ type: 'text', text: textBefore });
     }
-    
+
     const isDataUrl = !!match[4]; // if data URL match group is present
     if (isDataUrl) {
       const fullDataUrl = match[1];
@@ -559,7 +559,7 @@ async function runSubAgent(
 
     while (!isDone && stepsCount < maxSteps) {
       stepsCount++;
-      
+
       window?.webContents.send('openai:sub-agent-status', {
         chatId,
         agent_name: agentName,
@@ -718,7 +718,7 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
       throw new Error(`Provider introuvable : ${providerId}`);
     }
     console.log(`[IPC] openai:chat-stream-start called:`, { providerId, model, resolvedBaseUrl: provider.base_url });
-    
+
     // S'assurer que le chemin d'Ollama finit par /v1 pour le client officiel
     let baseUrl = provider.base_url;
     if (providerId === 'ollama' && !baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1/')) {
@@ -938,7 +938,7 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
           if (tc.function.name === 'run_parallel_agents') {
             const tasks = args.tasks || [];
             console.log(`[Parallel Agents] Starting parallel execution for ${tasks.length} tasks...`);
-            
+
             // Notify Svelte of parallel tasks start
             mainWindow?.webContents.send('openai:sub-agents-started', {
               chatId,
@@ -947,10 +947,10 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
 
             // Filter out run_parallel_agents to prevent subagents from spawning nested subagents
             const subTools = toolsForMode.filter(t => t.function.name !== 'run_parallel_agents');
-            
+
             let subProviderId = await getSetting(`chat_${chatId}_subagents_provider_id`, '');
             let subModel = await getSetting(`chat_${chatId}_subagents_model_name`, '');
-            
+
             if (!subProviderId) {
               subProviderId = await getSetting('default_subagents_provider_id', '');
             }
@@ -960,12 +960,12 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
 
             const finalSubProviderId = subProviderId || providerId;
             const finalSubModel = subModel || model;
-            
+
             result = await executeParallelAgents(tasks, chatId, finalSubProviderId, finalSubModel, subTools, mainWindow);
             isBlocked = true;
           } else if (tc.function.name === 'Bash') {
             const command = args.command || '';
-            
+
             // 1. Guardrail blacklist check
             if (!isCommandSafe(command)) {
               result = "error: Command execution blocked by security guardrails. The command contains forbidden patterns (destructive actions).";
@@ -980,7 +980,7 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
                 command: command,
                 actionDescription: `Exécution de la commande Bash : ${command}`
               });
-              
+
               if (!approved) {
                 result = "error: User rejected the execution of this Bash command for security reasons.";
                 isBlocked = true;
@@ -999,7 +999,7 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
                   path: targetPath,
                   actionDescription: `Accès hors espace de travail (${tc.function.name}) : ${targetPath}`
                 });
-                
+
                 if (!approved) {
                   result = `error: User rejected the access to this path (${targetPath}) for security reasons.`;
                   isBlocked = true;
@@ -1070,10 +1070,10 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
       event.sender.send('openai:chat-stream-end', { chatId, requestId: currentRequestId });
     } else {
       console.error('Error in openai:chat-stream-start:', err);
-      event.sender.send('openai:chat-stream-error', { 
-        chatId, 
-        requestId: currentRequestId, 
-        error: err instanceof Error ? err.message : String(err) 
+      event.sender.send('openai:chat-stream-error', {
+        chatId,
+        requestId: currentRequestId,
+        error: err instanceof Error ? err.message : String(err)
       });
     }
   } finally {

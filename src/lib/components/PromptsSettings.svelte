@@ -186,7 +186,7 @@
   <!-- Left list: available prompts -->
   <div class="col-span-1 bg-[#070b15]/60 border border-slate-900/80 rounded-2xl p-4 flex flex-col gap-2 select-none">
     <h3 class="text-xs font-bold text-slate-400 tracking-wider uppercase mb-2 px-1">Fichiers Prompts</h3>
-    
+
     {#if isLoading}
       <div class="flex-1 flex items-center justify-center">
         <div class="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
@@ -197,8 +197,8 @@
           <button
             onclick={() => selectPrompt(p)}
             class="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold rounded-xl transition-all text-left cursor-pointer border
-              {selectedPrompt === p 
-                ? 'bg-indigo-600/10 border-indigo-500/20 text-indigo-400 font-extrabold' 
+              {selectedPrompt === p
+                ? 'bg-indigo-600/10 border-indigo-500/20 text-indigo-400 font-extrabold'
                 : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/30'
               }"
           >
@@ -220,7 +220,7 @@
           </h3>
           <p class="text-[10px] text-slate-500 mt-0.5">Ces templates régissent le comportement de Talos dans ses différents modes.</p>
         </div>
-        
+
         <div class="flex items-center gap-2">
           <button
             onclick={() => showHelp = true}
@@ -268,8 +268,8 @@
       <!-- Floating notification -->
       {#if notification}
         <div class="absolute bottom-4 left-6 right-6 flex items-center gap-2 px-4 py-3 rounded-xl border select-none animate-in fade-in slide-in-from-bottom-2 duration-200
-          {notification.type === 'success' 
-            ? 'bg-emerald-600/10 border-emerald-500/20 text-emerald-400' 
+          {notification.type === 'success'
+            ? 'bg-emerald-600/10 border-emerald-500/20 text-emerald-400'
             : 'bg-rose-600/10 border-rose-500/20 text-rose-400'
           }"
         >
@@ -307,7 +307,7 @@
     aria-label="Aide sur le système de templates"
   >
     <div class="relative w-full max-w-xl max-h-[80vh] bg-[#0a0f1e] border border-slate-800/80 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-      
+
       <!-- Header -->
       <div class="flex items-center justify-between px-6 py-4 border-b border-slate-800/60 select-none">
         <div class="flex items-center gap-3">
@@ -339,8 +339,8 @@
           </h3>
           <div class="bg-slate-950/50 border border-slate-900/60 rounded-xl p-4 space-y-2.5">
             <p class="text-[13px] text-slate-300 leading-relaxed">
-              Les prompts de Talos utilisent un système de templates simple. 
-              Avant d'envoyer le prompt à l'IA, les variables sont automatiquement 
+              Les prompts de Talos utilisent un système de templates simple.
+              Avant d'envoyer le prompt à l'IA, les variables sont automatiquement
               remplacées par les valeurs réelles du contexte.
             </p>
             <div class="bg-slate-950/80 border border-slate-900/60 rounded-lg p-3 font-mono text-xs space-y-1.5">

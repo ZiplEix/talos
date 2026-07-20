@@ -23,7 +23,7 @@
   let editName = $state('');
   let editBaseUrl = $state('');
   let editApiKey = $state('');
-  
+
   // Model input field
   let newModelName = $state('');
 
@@ -144,13 +144,13 @@
   function saveProviderToLocalStorage(id: string, name: string, baseUrl: string, apiKey: string) {
     const existingIndex = providers.findIndex(p => p.id === id);
     const newProv = { id, name, base_url: baseUrl, api_key: apiKey };
-    
+
     if (existingIndex > -1) {
       providers[existingIndex] = newProv;
     } else {
       providers.push(newProv);
     }
-    
+
     localStorage.setItem('talos_providers', JSON.stringify(providers));
   }
 
@@ -239,12 +239,12 @@
 </script>
 
 <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-start animate-fade-in">
-  
+
   <!-- Left Column: Providers List -->
   <div class="col-span-1 bg-slate-900/10 border border-slate-900/60 p-4 rounded-xl space-y-4">
     <div class="flex items-center justify-between">
       <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider">Fournisseurs</h3>
-      <button 
+      <button
         onclick={startAdding}
         class="p-1 rounded text-slate-500 hover:text-indigo-400 hover:bg-slate-900/60 transition-colors cursor-pointer"
         title="Ajouter un fournisseur"
@@ -259,7 +259,7 @@
           onclick={() => { isAdding = false; selectedProviderId = prov.id; }}
           class="w-full text-left p-3 rounded-lg border text-xs font-semibold transition-all cursor-pointer flex flex-col gap-1 {
             selectedProviderId === prov.id && !isAdding
-              ? 'bg-indigo-600/10 text-indigo-400 border-indigo-500/10 shadow-[inset_2px_0_0_#6366f1]' 
+              ? 'bg-indigo-600/10 text-indigo-400 border-indigo-500/10 shadow-[inset_2px_0_0_#6366f1]'
               : 'text-slate-400 hover:text-slate-200 bg-transparent border-transparent hover:bg-slate-900/30'
           }"
         >
@@ -272,7 +272,7 @@
 
   <!-- Right Column(s): Provider Configuration Panel -->
   <div class="col-span-1 md:col-span-2 space-y-6 bg-slate-900/10 border border-slate-900/60 p-6 rounded-xl">
-    
+
     <!-- Title -->
     <div>
       <h3 class="text-lg font-bold text-slate-100">
@@ -288,15 +288,15 @@
     <!-- Form -->
     <div class="space-y-4">
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        
+
         <!-- Name Field -->
         <div class="space-y-1.5">
           <label for="prov-name" class="text-xs font-bold text-slate-400 uppercase tracking-wider">Nom du fournisseur</label>
           <div class="relative flex items-center">
             <Bot class="absolute left-3 text-slate-500" size={14} />
-            <input 
+            <input
               id="prov-name"
-              type="text" 
+              type="text"
               placeholder="Ex: Ollama, OpenRouter"
               bind:value={editName}
               class="w-full bg-slate-950/60 border border-slate-850 focus:border-indigo-500/50 rounded-lg pl-9 pr-4 py-2 text-sm text-slate-200 placeholder-slate-600 outline-none transition-colors"
@@ -309,9 +309,9 @@
           <label for="prov-url" class="text-xs font-bold text-slate-400 uppercase tracking-wider">URL de base (Endpoint)</label>
           <div class="relative flex items-center">
             <Globe class="absolute left-3 text-slate-500" size={14} />
-            <input 
+            <input
               id="prov-url"
-              type="text" 
+              type="text"
               placeholder="Ex: http://localhost:11434"
               bind:value={editBaseUrl}
               class="w-full bg-slate-950/60 border border-slate-850 focus:border-indigo-500/50 rounded-lg pl-9 pr-4 py-2 text-sm text-slate-200 placeholder-slate-600 outline-none transition-colors font-mono"
@@ -326,9 +326,9 @@
         <label for="prov-key" class="text-xs font-bold text-slate-400 uppercase tracking-wider">Clé d'API (si requise)</label>
         <div class="relative flex items-center">
           <Shield class="absolute left-3 text-slate-500" size={14} />
-          <input 
+          <input
             id="prov-key"
-            type="password" 
+            type="password"
             placeholder="Clé secrète d'authentification"
             bind:value={editApiKey}
             class="w-full bg-slate-950/60 border border-slate-850 focus:border-indigo-500/50 rounded-lg pl-9 pr-4 py-2 text-sm text-slate-200 placeholder-slate-600 outline-none transition-colors"
@@ -349,7 +349,7 @@
         <div class="flex items-center gap-2">
           <div class="relative flex-1 flex items-center">
             <Cpu class="absolute left-3 text-slate-500" size={14} />
-            <input 
+            <input
               type="text"
               placeholder="Entrez le nom du modèle (ex: llama3:8b)"
               bind:value={newModelName}

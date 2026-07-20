@@ -75,7 +75,7 @@ export async function getSystemPrompt(mode: string, chatId?: string): Promise<st
 
     // Retrieve active tools for this specific mode
     const globalSubagentsEnabled = (await getSetting('subagents_enabled', 'true')) === 'true';
-    const chatSubagentsEnabled = chatId 
+    const chatSubagentsEnabled = chatId
       ? (await getSetting(`chat_${chatId}_subagents_enabled`, 'true')) === 'true'
       : true;
     const subagentsAllowed = globalSubagentsEnabled && chatSubagentsEnabled;

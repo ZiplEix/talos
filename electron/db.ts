@@ -148,17 +148,17 @@ export async function getChats(): Promise<Array<{ id: string; title: string; cre
 export async function createChat(id: string, title: string): Promise<void> {
   const chatFolder = path.join(CHATS_DIR, id);
   await fs.mkdir(chatFolder, { recursive: true });
-  
+
   const metadataPath = path.join(chatFolder, 'metadata.json');
   const messagesPath = path.join(chatFolder, 'messages.json');
-  
+
   const metadata = {
     id,
     title,
     created_at: Date.now(),
     mode: 'agent'
   };
-  
+
   await writeJsonFile(metadataPath, metadata);
   await writeJsonFile(messagesPath, []);
 }
@@ -219,14 +219,14 @@ export async function addMessage(
 ): Promise<void> {
   const chatFolder = path.join(CHATS_DIR, chatId);
   const messagesPath = path.join(chatFolder, 'messages.json');
-  
+
   if (!existsSync(chatFolder)) {
     throw new Error(`Chat ${chatId} not found to add message`);
   }
-  
+
   const messages = await readJsonFile<any[]>(messagesPath, []);
   const index = messages.findIndex((m: any) => m.id === id);
-  
+
   const messageObj: any = {
     id,
     role,
@@ -257,11 +257,11 @@ export async function addMessage(
 export async function saveMessages(chatId: string, messages: any[]): Promise<void> {
   const chatFolder = path.join(CHATS_DIR, chatId);
   const messagesPath = path.join(chatFolder, 'messages.json');
-  
+
   if (!existsSync(chatFolder)) {
     throw new Error(`Chat ${chatId} not found to save messages`);
   }
-  
+
   await writeJsonFile(messagesPath, messages);
 }
 
@@ -448,7 +448,7 @@ export async function deleteSchedule(id: string): Promise<void> {
   const task = schedules.find(s => s.id === id);
   const filteredSchedules = schedules.filter(s => s.id !== id);
   await writeJsonFile(SCHEDULES_FILE, filteredSchedules);
-  
+
   // Supprimer aussi le chat dédié s'il existe
   if (task?.chat_id) {
     const chatFolder = path.join(CHATS_DIR, task.chat_id);

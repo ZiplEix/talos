@@ -60,10 +60,10 @@
 
   function loadDataFromLocalStorage() {
     const savedProvs = localStorage.getItem('talos_providers');
-    const provs: Provider[] = savedProvs 
-      ? JSON.parse(savedProvs) 
+    const provs: Provider[] = savedProvs
+      ? JSON.parse(savedProvs)
       : [{ id: 'ollama', name: 'Ollama', base_url: 'http://localhost:11434/v1', api_key: '' }];
-    
+
     const list: ProviderGroup[] = [];
     for (const p of provs) {
       const savedMods = localStorage.getItem(`talos_models_${p.id}`);
@@ -134,8 +134,8 @@
 
   <!-- Overlay Backdrop for closing -->
   {#if isOpen}
-    <button 
-      onclick={() => isOpen = false} 
+    <button
+      onclick={() => isOpen = false}
       class="fixed inset-0 z-40 bg-transparent cursor-default no-drag"
       tabindex="-1"
       aria-label="Fermer le menu"
@@ -144,7 +144,7 @@
 
   <!-- Popover Dropdown -->
   {#if isOpen}
-    <div 
+    <div
       class="absolute bottom-full left-0 mb-2 w-64 bg-[#0b0f19] border border-slate-900 rounded-xl shadow-2xl z-50 p-2 space-y-2 animate-fade-in no-drag text-left"
     >
       <div class="px-2 py-1.5 border-b border-slate-900/80">
@@ -156,8 +156,8 @@
           <div class="p-3 text-center space-y-2">
             <AlertCircle size={20} class="text-slate-600 mx-auto" />
             <p class="text-[11px] text-slate-500 leading-relaxed">Aucun modèle n'est configuré. Rendez-vous dans les <strong>Paramètres</strong> pour en ajouter.</p>
-            <a 
-              href="/settings" 
+            <a
+              href="/settings"
               onclick={() => isOpen = false}
               class="inline-block text-[10px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors mt-1"
             >
@@ -173,7 +173,7 @@
                   <Bot size={10} />
                   <span>{group.provider.name}</span>
                 </div>
-                
+
                 <!-- Models list -->
                 <div class="space-y-0.5">
                   {#each group.models as model (model.id)}
@@ -181,7 +181,7 @@
                       onclick={() => selectModel(group.provider.id, model.name)}
                       class="w-full text-left px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1.5 font-semibold {
                         activeProviderId === group.provider.id && activeModel === model.name
-                          ? 'bg-indigo-600/10 text-indigo-400 border border-indigo-500/10 font-bold' 
+                          ? 'bg-indigo-600/10 text-indigo-400 border border-indigo-500/10 font-bold'
                           : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
                       }"
                     >

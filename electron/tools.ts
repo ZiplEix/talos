@@ -54,13 +54,13 @@ export function isPathAllowed(filePath: string, chatId?: string): boolean {
   try {
     const resolvedPath = path.resolve(filePath);
     const resolvedCwd = path.resolve(process.cwd());
-    
+
     // Check if it's inside CWD
     const isUnderCwd = resolvedPath === resolvedCwd || resolvedPath.startsWith(resolvedCwd + path.sep);
     if (isUnderCwd) {
       return true;
     }
-    
+
     // Check if it's inside the chat folder (exception for artifacts)
     if (chatId) {
       const chatsDir = path.join(getDbPath(), 'chats');
@@ -819,7 +819,7 @@ export function handleWriteArtifact(args: any, chatId?: string): string {
     // Ensure parent directories exist within the chat folder
     const dir = path.dirname(filePath);
     fs.mkdirSync(dir, { recursive: true });
-    
+
     fs.writeFileSync(filePath, content, 'utf8');
     return `success: artifact '${args.filename}' written successfully`;
   } catch (err: any) {
@@ -882,19 +882,19 @@ export function handleListArtifacts(_args: any, chatId?: string): string {
     }
     const chatsDir = path.join(getDbPath(), 'chats');
     const chatFolder = path.join(chatsDir, chatId);
-    
+
     if (!fs.existsSync(chatFolder)) {
       return '[]';
     }
 
     const results: string[] = [];
-    
+
     function walk(dir: string) {
       const files = fs.readdirSync(dir, { withFileTypes: true });
       for (const file of files) {
         const fullPath = path.join(dir, file.name);
         const rel = path.relative(chatFolder, fullPath);
-        
+
         // Hide messages.json and metadata.json
         if (isRestrictedPath(fullPath)) {
           continue;

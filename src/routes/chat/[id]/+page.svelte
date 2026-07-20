@@ -53,7 +53,7 @@
 
   // Nom abrégé du dossier de travail (CWD)
   let folderName = $derived(cwd ? (cwd.split(/[/\\]/).pop() || cwd) : 'Dossier');
-  
+
   let textareaElement = $state<HTMLTextAreaElement | null>(null);
   let editAreaElement = $state<HTMLTextAreaElement | null>(null);
 
@@ -278,7 +278,7 @@
     if (window.talosAPI) {
       try {
         subagentsChatEnabled = (await window.talosAPI.getSetting(`chat_${id}_subagents_enabled`, 'true')) === 'true';
-        
+
         let subProviderId = await window.talosAPI.getSetting(`chat_${id}_subagents_provider_id`, '');
         let subModelName = await window.talosAPI.getSetting(`chat_${id}_subagents_model_name`, '');
         if (!subProviderId) {
@@ -289,7 +289,7 @@
         }
         subagentsProviderId = subProviderId;
         subagentsModel = subModelName;
-        
+
         // Charger le modèle master pour ce chat
         let chatProviderId = await window.talosAPI.getSetting(`chat_${id}_provider_id`, '');
         let chatModelName = await window.talosAPI.getSetting(`chat_${id}_model_name`, '');
@@ -301,7 +301,7 @@
         }
         activeProviderId = chatProviderId;
         activeModel = chatModelName;
-        
+
         emailChatEnabled = (await window.talosAPI.getSetting(`chat_${id}_email_enabled`, 'false')) === 'true';
         emailChatRecipients = await window.talosAPI.getSetting(`chat_${id}_email_recipients`, '');
         showEmailPopover = false;
@@ -442,17 +442,17 @@
       const files = Array.from(target.files);
       const imageFiles = files.filter(f => f.type.startsWith('image/'));
       const otherFiles = files.filter(f => !f.type.startsWith('image/'));
-      
+
       if (imageFiles.length > 0) {
         await processFiles(imageFiles);
       }
-      
+
       if (otherFiles.length > 0) {
         attachedFileObjects = [...attachedFileObjects, ...otherFiles];
         const names = otherFiles.map(file => file.name);
         attachedFiles = [...attachedFiles, ...names];
       }
-      
+
       target.value = '';
     }
   }
@@ -565,7 +565,7 @@
           return apiMsg;
         });
         const cleanMessages = $state.snapshot(plainMessages);
-        
+
         const aiMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
         const assistantMsg = { id: aiMsgId, role: 'assistant', content: '' };
         messages.push(assistantMsg);
@@ -580,7 +580,7 @@
         const aiMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
         const content = `[Simulation Fallback Browser]\nModèle sélectionné : ${activeModel}\nFournisseur : ${activeProviderId}\nDossier de travail : ${cwd}\n\nVotre message a été reçu ! Pour exécuter de vrais appels d'API, veuillez lancer l'application avec Electron et configurer un fournisseur de clés.`;
         const assistantMsg = { id: aiMsgId, role: 'assistant', content };
-        
+
         messages.push(assistantMsg);
         saveMessageToLocalStorage(chatId, assistantMsg);
         thinkingStatus = '';
@@ -933,20 +933,20 @@
     }
 
     const userMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
-    const userMsg = { 
-      id: userMsgId, 
-      role: 'user', 
-      content: text, 
-      files: messageFiles.length > 0 ? messageFiles : undefined 
+    const userMsg = {
+      id: userMsgId,
+      role: 'user',
+      content: text,
+      files: messageFiles.length > 0 ? messageFiles : undefined
     };
-    
+
     const isFirstUserMessage = messages.filter(m => m.role === 'user').length === 0;
     messages.push(userMsg);
-    
+
     if (window.talosAPI) {
       try {
         await window.talosAPI.addMessage(userMsgId, chatId, 'user', text, undefined, undefined, userMsg.files);
-        
+
         // Auto-generate title for new chats using the first message
         if (isFirstUserMessage && (chatTitle.startsWith('Nouveau Chat') || chatTitle === 'Discussion' || chatTitle === 'New Chat')) {
           window.talosAPI.generateChatTitle(chatId, text, activeProviderId, activeModel).then((newTitle) => {
@@ -1025,7 +1025,7 @@
   async function selectMode(mode: 'agent' | 'plan' | 'ask') {
     if (currentMode === mode) return;
     currentMode = mode;
-    
+
     if (window.talosAPI) {
       try {
         await window.talosAPI.updateChatMode(chatId, mode);
@@ -1146,7 +1146,7 @@
 
 <svelte:window onkeydown={handleWindowKeydown} />
 
-<div 
+<div
   class="flex flex-col h-full w-full bg-transparent overflow-hidden relative"
   role="region"
   aria-label="Zone de conversation et depot de fichiers"
@@ -1155,7 +1155,7 @@
   ondragleave={() => isDragging = false}
   ondrop={(e) => { e.preventDefault(); isDragging = false; if (e.dataTransfer) processFiles(e.dataTransfer.files); }}
 >
-  
+
   {#if isDragging}
     <div class="absolute inset-0 bg-[#020617]/85 border-2 border-dashed border-indigo-500/50 rounded-2xl z-50 flex flex-col items-center justify-center pointer-events-none select-none animate-in fade-in duration-200">
       <div class="p-6 bg-indigo-900/10 rounded-full border border-indigo-500/20 text-indigo-400 mb-4 animate-bounce">
@@ -1165,24 +1165,24 @@
       <p class="text-xs text-slate-500 mt-1.5">Déposez vos images ou fichiers de code directement ici.</p>
     </div>
   {/if}
-  
+
   <!-- Top bar of the discussion: chat title & Mode Selector segmented tabs -->
   <div class="h-12 border-b border-slate-900/60 bg-[#070b15]/65 backdrop-blur-md px-8 flex items-center justify-between shrink-0 select-none z-10">
     <div class="flex items-center gap-3">
       <h2 class="text-xs font-bold tracking-wide text-slate-300">{chatTitle}</h2>
     </div>
-    
+
     <!-- Mode Switcher segment controls -->
     <div class="flex bg-slate-950/80 p-0.5 border border-slate-900 rounded-lg text-[10px] font-bold">
       {#each ['agent', 'plan', 'ask'] as m}
         <button
           onclick={() => selectMode(m as any)}
           class="px-3 py-1 rounded-md transition-all cursor-pointer capitalize
-            {currentMode === m 
-              ? m === 'agent' 
-                ? 'bg-indigo-600/10 text-indigo-400 border border-indigo-500/25' 
-                : m === 'plan' 
-                  ? 'bg-sky-600/10 text-sky-400 border border-sky-500/25' 
+            {currentMode === m
+              ? m === 'agent'
+                ? 'bg-indigo-600/10 text-indigo-400 border border-indigo-500/25'
+                : m === 'plan'
+                  ? 'bg-sky-600/10 text-sky-400 border border-sky-500/25'
                   : 'bg-emerald-600/10 text-emerald-400 border border-emerald-500/25'
               : 'text-slate-500 hover:text-slate-350 border border-transparent hover:bg-slate-900/40'
             }"
@@ -1194,7 +1194,7 @@
   </div>
 
   <!-- Messages List Feed (Takes all upper space, padded nicely so text isn't against screen edges) -->
-  <div 
+  <div
     bind:this={chatContainer}
     class="flex-1 overflow-y-auto px-8 py-6 space-y-6 scrollbar-thin scrollbar-thumb-slate-900 scrollbar-track-transparent"
   >
@@ -1223,13 +1223,13 @@
                   ></textarea>
                 </div>
                 <div class="flex justify-end gap-2 text-xs">
-                  <button 
+                  <button
                     onclick={cancelEditing}
                     class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-350 rounded-md cursor-pointer transition-colors"
                   >
                     Annuler
                   </button>
-                  <button 
+                  <button
                     onclick={() => saveEditedMessage(msg.id)}
                     class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md cursor-pointer font-bold transition-colors"
                   >
@@ -1249,20 +1249,20 @@
                 >
                   <Pencil size={11} />
                 </button>
-                
+
                 <div class="bg-gradient-to-br from-indigo-600 to-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap break-all shadow-md">
                   {#if msg.content}
                     <div>{msg.content}</div>
                   {/if}
-                  
+
                   {#if msg.files && msg.files.length > 0}
                     <div class="flex flex-wrap gap-2 {msg.content ? 'pt-2.5 mt-2 border-t border-white/10' : ''}">
                       {#each msg.files as file}
                         {#if file.type.startsWith('image/')}
                           <div class="relative group rounded-lg overflow-hidden border border-white/20 max-w-[200px] max-h-[150px] bg-black/10">
-                            <img 
-                              src={file.url} 
-                              alt={file.name} 
+                            <img
+                              src={file.url}
+                              alt={file.name}
                               class="object-contain max-w-full max-h-[150px]"
                             />
                           </div>
@@ -1284,7 +1284,7 @@
               {#if msg.content}
                 <div>{@html renderMarkdown(msg.content)}</div>
               {/if}
-              
+
               {#if msg.tool_calls && msg.tool_calls.length > 0}
                 <div class="space-y-3 border-l-2 border-slate-800 pl-4 py-1.5 mt-2 bg-slate-900/10 rounded-r-lg">
                   {#each msg.tool_calls as tc}
@@ -1295,7 +1295,7 @@
                         <span class="p-1 rounded bg-indigo-500/10 text-indigo-400">🔧</span>
                         <span>Appel d'outil : {tc.function.name}</span>
                       </summary>
-                      
+
                       <div class="pl-5 mt-2.5 space-y-3">
                         {#if tc.function.arguments}
                           <div class="space-y-1">
@@ -1303,7 +1303,7 @@
                             <pre class="bg-slate-950/60 p-2.5 rounded border border-slate-900/60 text-[11px] font-mono text-slate-300 overflow-x-auto max-w-full">{tc.function.arguments}</pre>
                           </div>
                         {/if}
-                        
+
                         {#if response}
                           <div class="space-y-1">
                             <span class="text-[10px] font-bold text-slate-550 uppercase tracking-wider block">Résultat :</span>
@@ -1350,7 +1350,7 @@
             <span class="p-1 rounded bg-indigo-500/10 text-indigo-400">🤖</span>
             <span>Sous-Agents en cours d'exécution parallèle ({Object.values(subAgentsStatus).filter(s => s.isDone).length}/{Object.keys(subAgentsStatus).length})</span>
           </div>
-          <button 
+          <button
             type="button"
             onclick={() => showSubAgentsPanel = false}
             class="p-1 hover:bg-slate-900 rounded text-slate-500 hover:text-slate-355 transition-colors cursor-pointer shrink-0 flex items-center justify-center"
@@ -1416,7 +1416,7 @@
             <span>Action : {activePerm.toolName}</span>
             <span>Type : {activePerm.type === 'bash' ? 'Bash Shell' : 'Accès Fichier'}</span>
           </div>
-          
+
           {#if activePerm.type === 'bash'}
             <div class="text-xs font-mono bg-slate-950 p-3 rounded-lg border border-slate-900 overflow-x-auto text-amber-300 max-w-full whitespace-pre-wrap select-text selection:bg-amber-500/30">
               {activePerm.command}
@@ -1426,20 +1426,20 @@
               {activePerm.path}
             </div>
           {/if}
-          
+
           <div class="text-[11px] text-slate-450 italic">
             {activePerm.actionDescription}
           </div>
         </div>
 
         <div class="flex gap-3 justify-end pt-1">
-          <button 
+          <button
             onclick={() => handlePermission(activePerm.permissionId, false)}
             class="px-4 py-2 bg-slate-900 hover:bg-slate-850 text-red-400 hover:text-red-300 border border-slate-800 hover:border-slate-700 rounded-xl cursor-pointer text-xs font-bold transition-all"
           >
             Refuser l'action
           </button>
-          <button 
+          <button
             onclick={() => handlePermission(activePerm.permissionId, true)}
             class="px-5 py-2 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 rounded-xl cursor-pointer text-xs font-bold transition-all shadow-md shadow-amber-950/30 flex items-center gap-2"
             title="Autoriser l'action (Appuyer sur Entrée)"
@@ -1454,14 +1454,14 @@
 
   <!-- Bottom input and settings controls zone (Stretches to edges, border-t at top) -->
   <footer class="border-t border-slate-900 bg-slate-950/40 px-8 py-5 shrink-0">
-    
+
     <!-- Hidden File Input -->
-    <input 
-      type="file" 
-      multiple 
-      class="hidden" 
-      bind:this={fileInput} 
-      onchange={handleFileChange} 
+    <input
+      type="file"
+      multiple
+      class="hidden"
+      bind:this={fileInput}
+      onchange={handleFileChange}
     />
 
     <!-- Attached files tags list (Minimalist tags above the input box) -->
@@ -1470,8 +1470,8 @@
         {#each attachedFiles as filename, index}
           <div class="flex items-center gap-1 px-2.5 py-1 bg-indigo-950/40 border border-indigo-900/40 text-indigo-400 rounded-md text-[10px] font-bold">
             <span>{filename}</span>
-            <button 
-              onclick={() => removeFile(index)} 
+            <button
+              onclick={() => removeFile(index)}
               class="hover:text-red-400 cursor-pointer p-0.5 rounded"
               title="Retirer"
             >
@@ -1484,11 +1484,11 @@
 
     <div class="flex flex-col gap-3">
       <!-- Message input card (Borderless text, round send button inside) -->
-      <div class="flex items-center gap-3 w-full bg-slate-900/20 border border-slate-900 
-        {currentMode === 'agent' 
-          ? 'focus-within:border-indigo-500/40' 
-          : currentMode === 'plan' 
-            ? 'focus-within:border-sky-500/40' 
+      <div class="flex items-center gap-3 w-full bg-slate-900/20 border border-slate-900
+        {currentMode === 'agent'
+          ? 'focus-within:border-indigo-500/40'
+          : currentMode === 'plan'
+            ? 'focus-within:border-sky-500/40'
             : 'focus-within:border-emerald-500/40'
         } rounded-2xl px-4 py-2 transition-all relative">
 
@@ -1550,7 +1550,7 @@
           rows="1"
           class="flex-1 bg-transparent text-sm text-slate-200 placeholder-slate-500 resize-none outline-none max-h-[240px] py-1.5 scrollbar-thin scrollbar-thumb-slate-900 no-drag"
         ></textarea>
-        
+
         {#if isThinking}
           <button
             type="button"
@@ -1566,10 +1566,10 @@
             onclick={sendMessage}
             disabled={(!inputMessage.trim() && attachedFiles.length === 0) || pendingPermissions.length > 0}
             class="p-2.5 text-white rounded-full transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed no-drag shrink-0 flex items-center justify-center shadow-md hover:scale-105
-              {currentMode === 'agent' 
-                ? 'bg-indigo-600 hover:bg-indigo-500' 
-                : currentMode === 'plan' 
-                  ? 'bg-sky-600 hover:bg-sky-500' 
+              {currentMode === 'agent'
+                ? 'bg-indigo-600 hover:bg-indigo-500'
+                : currentMode === 'plan'
+                  ? 'bg-sky-600 hover:bg-sky-500'
                   : 'bg-emerald-600 hover:bg-emerald-500'
               }"
             title="Envoyer le message"
@@ -1578,12 +1578,12 @@
           </button>
         {/if}
       </div>
-      
+
       <!-- Toolbar (Bottom of the zone): minimalist text line: path | model | join -->
       <div class="flex items-center justify-start gap-2.5 text-xs text-slate-500 font-medium px-1">
-        
+
         <!-- CWD path (Truncated to avoid breaking small screens, but prints absolute path) -->
-        <button 
+        <button
           type="button"
           onclick={selectDirectory}
           class="hover:text-indigo-400 transition-colors cursor-pointer font-mono text-[11px] truncate max-w-[450px] flex items-center gap-1.5"
@@ -1597,11 +1597,11 @@
 
         {#if !isSettingsLoading}
           <!-- Model Selector popover with text variant -->
-          <ModelSelector 
-            bind:activeProviderId 
-            bind:activeModel 
+          <ModelSelector
+            bind:activeProviderId
+            bind:activeModel
             variant="text"
-            onSelect={handleSelectModel} 
+            onSelect={handleSelectModel}
           />
         {/if}
 
@@ -1612,8 +1612,8 @@
               type="button"
               onclick={toggleSubagentsPopover}
               class="transition-colors cursor-pointer flex items-center justify-center gap-1.5 text-[11px] font-medium
-                {subagentsChatEnabled 
-                  ? 'text-indigo-400 hover:text-indigo-300' 
+                {subagentsChatEnabled
+                  ? 'text-indigo-400 hover:text-indigo-300'
                   : 'text-slate-500 hover:text-slate-400'
                 }"
               title="Configuration des sous-agents pour cette discussion"
@@ -1624,8 +1624,8 @@
 
             {#if showSubagentsPopover}
               <!-- Popover overlay to close when clicking outside -->
-              <div 
-                class="fixed inset-0 z-40 cursor-default" 
+              <div
+                class="fixed inset-0 z-40 cursor-default"
                 onclick={() => showSubagentsPopover = false}
                 role="presentation"
               ></div>
@@ -1633,7 +1633,7 @@
               <!-- Popover box -->
               <div class="absolute bottom-full left-0 mb-2 z-50 bg-[#0f1422] border border-slate-800 rounded-xl p-4 shadow-xl w-72 space-y-3 font-medium">
                 <h4 class="text-xs font-bold text-slate-350 uppercase tracking-wider">Sous-agents (Exécution en parallèle)</h4>
-                
+
                 <div class="flex items-center justify-between">
                   <span class="text-xs text-slate-455 text-slate-400">Activer les sous-agents</span>
                   <button
@@ -1654,11 +1654,11 @@
                 {#if subagentsChatEnabled && !isSettingsLoading}
                   <div class="space-y-1.5 border-t border-slate-800/40 pt-2 flex items-center justify-between">
                     <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Modèle</span>
-                    <ModelSelector 
-                      bind:activeProviderId={subagentsProviderId} 
-                      bind:activeModel={subagentsModel} 
+                    <ModelSelector
+                      bind:activeProviderId={subagentsProviderId}
+                      bind:activeModel={subagentsModel}
                       variant="text"
-                      onSelect={handleSelectSubagentsModel} 
+                      onSelect={handleSelectSubagentsModel}
                     />
                   </div>
                 {/if}
@@ -1673,8 +1673,8 @@
             type="button"
             onclick={toggleEmailPopover}
             class="transition-colors cursor-pointer flex items-center justify-center gap-1.5 text-[11px] font-medium
-              {emailChatEnabled 
-                ? 'text-amber-500 hover:text-amber-400' 
+              {emailChatEnabled
+                ? 'text-amber-500 hover:text-amber-400'
                 : 'text-slate-500 hover:text-slate-400'
               }"
             title="Configuration de l'outil E-mail pour cette discussion"
@@ -1685,8 +1685,8 @@
 
           {#if showEmailPopover}
             <!-- Popover overlay to close when clicking outside -->
-            <div 
-              class="fixed inset-0 z-40 cursor-default" 
+            <div
+              class="fixed inset-0 z-40 cursor-default"
               onclick={() => showEmailPopover = false}
               role="presentation"
             ></div>
@@ -1694,7 +1694,7 @@
             <!-- Popover box -->
             <div class="absolute bottom-full left-0 mb-2 z-50 bg-[#0f1422] border border-slate-800 rounded-xl p-4 shadow-xl w-72 space-y-3">
               <h4 class="text-xs font-bold text-slate-350 uppercase tracking-wider">Outil E-mail (SendEmail)</h4>
-              
+
               <div class="flex items-center justify-between">
                 <span class="text-xs text-slate-450 text-slate-400">Activer l'envoi de mail</span>
                 <button
@@ -1733,7 +1733,7 @@
         <span class="text-slate-800">|</span>
 
         <!-- Join Files paperclip icon button -->
-        <button 
+        <button
           type="button"
           onclick={triggerFileSelector}
           class="hover:text-indigo-400 transition-colors cursor-pointer flex items-center justify-center text-slate-500 hover:text-indigo-400"

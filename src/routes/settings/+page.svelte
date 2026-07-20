@@ -124,7 +124,7 @@
 
   <!-- Tab Content Container -->
   <div class="pt-6 min-h-[300px] w-full">
-    
+
     <!-- GENERAL TAB (Empty for now) -->
     {#if activeTab === 'general'}
       <div class="bg-[#0b0f19] border border-slate-800/60 rounded-2xl p-6 space-y-6">
@@ -132,7 +132,7 @@
           <h2 class="text-lg font-bold text-slate-200">Fonctionnalités Avancées</h2>
           <p class="text-xs text-slate-400">Activez ou désactivez les fonctionnalités agentiques de Talos.</p>
         </div>
-        
+
         <div class="flex items-center justify-between border-t border-slate-900/60 pt-5">
           <div class="space-y-1 max-w-lg">
             <h3 class="text-sm font-semibold text-slate-300">Exécution en Parallèle (Sous-agents)</h3>
@@ -143,15 +143,15 @@
               ⚠️ Attention : L'exécution simultanée de plusieurs agents autonomes peut consommer une quantité importante de tokens.
             </p>
           </div>
-          
-          <button 
+
+          <button
             onclick={toggleSubagents}
             title="Activer/Désactiver l'exécution en parallèle"
             aria-label="Toggle parallel sub-agents"
-            class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none 
+            class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none
               {subagentsEnabled ? 'bg-indigo-655 bg-indigo-600' : 'bg-slate-850 bg-slate-800'}"
           >
-            <span 
+            <span
               class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out
                 {subagentsEnabled ? 'translate-x-5' : 'translate-x-0'}"
             ></span>
@@ -164,7 +164,7 @@
             <h3 class="text-sm font-semibold text-slate-350">Modèles par Défaut</h3>
             <p class="text-xs text-slate-500">Définissez les modèles d'IA par défaut à utiliser pour les discussions et les sous-agents.</p>
           </div>
-          
+
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
             <!-- Modèle Master par défaut -->
             <div class="flex items-center justify-between bg-slate-950/20 border border-slate-900/50 p-4 rounded-xl">
@@ -172,7 +172,7 @@
                 <span class="text-xs font-bold text-slate-400 uppercase tracking-wider block">Agent Principal (Master)</span>
                 <span class="text-[11px] text-slate-500">Modèle par défaut pour les nouvelles discussions</span>
               </div>
-              <ModelSelector 
+              <ModelSelector
                 bind:activeProviderId={defaultProviderId}
                 bind:activeModel={defaultModel}
                 onSelect={handleSelectDefaultModel}
@@ -185,7 +185,7 @@
                 <span class="text-xs font-bold text-slate-400 uppercase tracking-wider block">Sous-Agents</span>
                 <span class="text-[11px] text-slate-500">Modèle par défaut pour les sous-agents</span>
               </div>
-              <ModelSelector 
+              <ModelSelector
                 bind:activeProviderId={defaultSubagentsProviderId}
                 bind:activeModel={defaultSubagentsModel}
                 onSelect={handleSelectDefaultSubagentsModel}

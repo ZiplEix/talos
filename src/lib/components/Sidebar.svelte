@@ -164,8 +164,8 @@
                 <span class="truncate">{chat.title}</span>
                 {#if chat.mode && chat.mode !== 'agent'}
                   <span class="px-1 py-0.5 rounded text-[8px] font-bold border shrink-0 capitalize
-                    {chat.mode === 'plan' 
-                      ? 'border-sky-500/30 text-sky-400 bg-sky-950/20' 
+                    {chat.mode === 'plan'
+                      ? 'border-sky-500/30 text-sky-400 bg-sky-950/20'
                       : 'border-emerald-500/30 text-emerald-400 bg-emerald-950/20'
                     }"
                   >
