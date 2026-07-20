@@ -1236,32 +1236,36 @@
                 <div class="space-y-3 border-l-2 border-slate-800 pl-4 py-1.5 mt-2 bg-slate-900/10 rounded-r-lg">
                   {#each msg.tool_calls as tc}
                     {@const response = messages.find(m => m.role === 'tool' && m.tool_call_id === tc.id)}
-                    <div class="space-y-1">
-                      <div class="flex items-center gap-2 text-xs font-semibold text-indigo-400">
+                    <details class="group">
+                      <summary class="flex items-center gap-2 text-xs font-semibold text-indigo-400 cursor-pointer select-none outline-none hover:text-indigo-300 transition-colors">
+                        <span class="transition-transform group-open:rotate-90 text-[10px] text-slate-500">▶</span>
                         <span class="p-1 rounded bg-indigo-500/10 text-indigo-400">🔧</span>
                         <span>Appel d'outil : {tc.function.name}</span>
-                      </div>
-                      {#if tc.function.arguments}
-                        <pre class="bg-slate-950/60 p-2.5 rounded border border-slate-900/60 text-[11px] font-mono text-slate-300 overflow-x-auto max-w-full">{tc.function.arguments}</pre>
-                      {/if}
+                      </summary>
                       
-                      {#if response}
-                        <details class="group mt-2">
-                          <summary class="flex items-center gap-1 text-[11px] font-medium text-slate-500 hover:text-slate-300 cursor-pointer select-none outline-none">
-                            <span class="transition-transform group-open:rotate-90">▶</span>
-                            <span>Afficher le résultat de l'outil</span>
-                          </summary>
-                          <div class="mt-1.5 border border-slate-900 rounded bg-slate-950/40 p-3 text-slate-350 text-xs font-mono max-h-80 overflow-y-auto whitespace-pre-wrap leading-relaxed">
-                            {response.content}
+                      <div class="pl-5 mt-2.5 space-y-3">
+                        {#if tc.function.arguments}
+                          <div class="space-y-1">
+                            <span class="text-[10px] font-bold text-slate-550 uppercase tracking-wider block">Arguments :</span>
+                            <pre class="bg-slate-950/60 p-2.5 rounded border border-slate-900/60 text-[11px] font-mono text-slate-300 overflow-x-auto max-w-full">{tc.function.arguments}</pre>
                           </div>
-                        </details>
-                      {:else}
-                        <div class="flex items-center gap-1.5 text-[11px] text-slate-500 italic mt-1 animate-pulse">
-                          <span class="inline-block w-1.5 h-1.5 rounded-full bg-slate-500"></span>
-                          <span>En attente du résultat...</span>
-                        </div>
-                      {/if}
-                    </div>
+                        {/if}
+                        
+                        {#if response}
+                          <div class="space-y-1">
+                            <span class="text-[10px] font-bold text-slate-550 uppercase tracking-wider block">Résultat :</span>
+                            <div class="border border-slate-900 rounded bg-slate-950/40 p-3 text-slate-350 text-xs font-mono max-h-80 overflow-y-auto whitespace-pre-wrap leading-relaxed">
+                              {response.content}
+                            </div>
+                          </div>
+                        {:else}
+                          <div class="flex items-center gap-1.5 text-[11px] text-slate-500 italic mt-1 animate-pulse">
+                            <span class="inline-block w-1.5 h-1.5 rounded-full bg-slate-500"></span>
+                            <span>En attente du résultat...</span>
+                          </div>
+                        {/if}
+                      </div>
+                    </details>
                   {/each}
                 </div>
               {/if}
