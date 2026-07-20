@@ -220,8 +220,8 @@ ipcMain.handle('messages:get', async (_, chatId: string) => {
   return await getMessages(chatId);
 });
 
-ipcMain.handle('messages:add', async (_, id: string, chatId: string, role: string, content: string, toolCalls?: any[], toolCallId?: string) => {
-  return await addMessage(id, chatId, role, content, toolCalls, toolCallId);
+ipcMain.handle('messages:add', async (_, id: string, chatId: string, role: string, content: string, toolCalls?: any[], toolCallId?: string, files?: any[]) => {
+  return await addMessage(id, chatId, role, content, toolCalls, toolCallId, files);
 });
 
 ipcMain.handle('messages:save', async (_, chatId: string, messages: any[]) => {
@@ -476,7 +476,10 @@ function parseMessageContent(text: string): any {
         }
       });
     } else {
-      const filePath = decodeURIComponent(match[3]);
+      let filePath = decodeURIComponent(match[3]);
+      if (process.platform !== 'win32' && !filePath.startsWith('/')) {
+        filePath = '/' + filePath;
+      }
       try {
         if (existsSync(filePath)) {
           const buffer = readFileSync(filePath);
@@ -489,6 +492,8 @@ function parseMessageContent(text: string): any {
               url: `data:${mimeType};base64,${base64}`
             }
           });
+        } else {
+          console.warn('[parseMessageContent] File does not exist:', filePath);
         }
       } catch (e) {
         console.error('Failed to read image for multimodal payload:', e);
@@ -753,7 +758,53 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
       ...chatMessages.map((m: any) => {
         const msg: any = { role: m.role };
         if (m.role === 'user') {
-          msg.content = parseMessageContent(m.content || '');
+          if (m.files && m.files.length > 0) {
+            const parts: any[] = [];
+            if (m.content) {
+              parts.push({ type: 'text', text: m.content });
+            }
+            for (const file of m.files) {
+              const isImage = (file.type && file.type.startsWith('image/')) || /\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name);
+              if (isImage) {
+                let fileUrl = file.url;
+                if (fileUrl && fileUrl.startsWith('file://')) {
+                  let filePath = decodeURIComponent(fileUrl.replace('file://', ''));
+                  if (process.platform !== 'win32' && !filePath.startsWith('/')) {
+                    filePath = '/' + filePath;
+                  }
+                  try {
+                    if (existsSync(filePath)) {
+                      const buffer = readFileSync(filePath);
+                      const ext = path.extname(filePath).replace('.', '').toLowerCase();
+                      const base64 = buffer.toString('base64');
+                      const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
+                      fileUrl = `data:${mimeType};base64,${base64}`;
+                    } else {
+                      console.warn('[multimodal] Local image file not found on disk:', filePath);
+                    }
+                  } catch (e) {
+                    console.error('[multimodal] Failed to read local image:', e);
+                  }
+                }
+                parts.push({
+                  type: 'image_url',
+                  image_url: {
+                    url: fileUrl
+                  }
+                });
+              } else {
+                if (file.content) {
+                  parts.push({
+                    type: 'text',
+                    text: `\n\n--- Fichier joint : ${file.name} ---\n\`\`\`\n${file.content}\n\`\`\``
+                  });
+                }
+              }
+            }
+            msg.content = parts;
+          } else {
+            msg.content = parseMessageContent(m.content || '');
+          }
         } else {
           msg.content = m.content || '';
         }

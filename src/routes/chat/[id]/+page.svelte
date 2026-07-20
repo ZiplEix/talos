@@ -436,13 +436,23 @@
     if (fileInput) fileInput.click();
   }
 
-  function handleFileChange(e: Event) {
+  async function handleFileChange(e: Event) {
     const target = e.target as HTMLInputElement;
     if (target.files) {
       const files = Array.from(target.files);
-      attachedFileObjects = [...attachedFileObjects, ...files];
-      const names = files.map(file => file.name);
-      attachedFiles = [...attachedFiles, ...names];
+      const imageFiles = files.filter(f => f.type.startsWith('image/'));
+      const otherFiles = files.filter(f => !f.type.startsWith('image/'));
+      
+      if (imageFiles.length > 0) {
+        await processFiles(imageFiles);
+      }
+      
+      if (otherFiles.length > 0) {
+        attachedFileObjects = [...attachedFileObjects, ...otherFiles];
+        const names = otherFiles.map(file => file.name);
+        attachedFiles = [...attachedFiles, ...names];
+      }
+      
       target.value = '';
     }
   }
@@ -548,6 +558,9 @@
           }
           if (m.tool_call_id) {
             apiMsg.tool_call_id = m.tool_call_id;
+          }
+          if (m.files) {
+            apiMsg.files = m.files;
           }
           return apiMsg;
         });
@@ -860,8 +873,6 @@
     const text = inputMessage.trim();
     if (!text && attachedFiles.length === 0) return;
 
-    // Read attached files first
-    let fileContents = '';
     const filesToRead = [...attachedFileObjects];
 
     // Clear inputs immediately
@@ -885,26 +896,56 @@
       return;
     }
 
+    const messageFiles: any[] = [];
+
     for (const file of filesToRead) {
-      try {
-        const content = await readFileAsText(file);
-        fileContents += `\n\n--- Fichier joint : ${file.name} ---\n\`\`\`\n${content}\n\`\`\``;
-      } catch (err) {
-        console.error(`Failed to read file ${file.name}:`, err);
-        fileContents += `\n\n[Erreur de lecture du fichier joint : ${file.name}]`;
+      if (file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name)) {
+        try {
+          const base64 = await readFileAsBase64(file);
+          const safeName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
+          const filename = `image_${Date.now()}_${safeName}`;
+          let fileUrl = '';
+          if (window.talosAPI && window.talosAPI.saveMedia) {
+            fileUrl = await window.talosAPI.saveMedia(chatId, filename, base64);
+          } else {
+            fileUrl = `data:${file.type || 'image/png'};base64,${base64}`;
+          }
+          messageFiles.push({
+            name: file.name,
+            url: fileUrl,
+            type: file.type || 'image/png'
+          });
+        } catch (err) {
+          console.error(`Failed to process image file ${file.name}:`, err);
+        }
+      } else {
+        try {
+          const content = await readFileAsText(file);
+          messageFiles.push({
+            name: file.name,
+            content: content,
+            type: file.type || 'text/plain'
+          });
+        } catch (err) {
+          console.error(`Failed to read file ${file.name}:`, err);
+        }
       }
     }
 
-    const textToSend = text + fileContents;
     const userMsgId = `msg-${Math.random().toString(36).substring(2, 9)}`;
-    const userMsg = { id: userMsgId, role: 'user', content: textToSend };
+    const userMsg = { 
+      id: userMsgId, 
+      role: 'user', 
+      content: text, 
+      files: messageFiles.length > 0 ? messageFiles : undefined 
+    };
     
     const isFirstUserMessage = messages.filter(m => m.role === 'user').length === 0;
     messages.push(userMsg);
     
     if (window.talosAPI) {
       try {
-        await window.talosAPI.addMessage(userMsgId, chatId, 'user', textToSend);
+        await window.talosAPI.addMessage(userMsgId, chatId, 'user', text, undefined, undefined, userMsg.files);
         
         // Auto-generate title for new chats using the first message
         if (isFirstUserMessage && (chatTitle.startsWith('Nouveau Chat') || chatTitle === 'Discussion' || chatTitle === 'New Chat')) {
@@ -1088,28 +1129,9 @@
 
   async function processFiles(files: FileList | File[]) {
     for (const file of Array.from(files)) {
-      if (file.type.startsWith('image/')) {
-        const base64 = await readFileAsBase64(file);
-        const safeName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
-        const filename = `image_${Date.now()}_${safeName}`;
-        if (window.talosAPI && window.talosAPI.saveMedia) {
-          try {
-            const fileUrl = await window.talosAPI.saveMedia(chatId, filename, base64);
-            const imageLink = `\n![Image](${fileUrl})\n`;
-            inputMessage = inputMessage ? inputMessage + imageLink : imageLink;
-          } catch (err) {
-            console.error('Failed to save media:', err);
-          }
-        } else {
-          const mockUrl = `data:${file.type};base64,${base64}`;
-          const imageLink = `\n![Image](${mockUrl})\n`;
-          inputMessage = inputMessage ? inputMessage + imageLink : imageLink;
-        }
-      } else {
-        if (!attachedFiles.includes(file.name)) {
-          attachedFileObjects = [...attachedFileObjects, file];
-          attachedFiles = [...attachedFiles, file.name];
-        }
+      if (!attachedFiles.includes(file.name)) {
+        attachedFileObjects = [...attachedFileObjects, file];
+        attachedFiles = [...attachedFiles, file.name];
       }
     }
   }
@@ -1229,7 +1251,30 @@
                 </button>
                 
                 <div class="bg-gradient-to-br from-indigo-600 to-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap break-all shadow-md">
-                  {msg.content}
+                  {#if msg.content}
+                    <div>{msg.content}</div>
+                  {/if}
+                  
+                  {#if msg.files && msg.files.length > 0}
+                    <div class="flex flex-wrap gap-2 {msg.content ? 'pt-2.5 mt-2 border-t border-white/10' : ''}">
+                      {#each msg.files as file}
+                        {#if file.type.startsWith('image/')}
+                          <div class="relative group rounded-lg overflow-hidden border border-white/20 max-w-[200px] max-h-[150px] bg-black/10">
+                            <img 
+                              src={file.url} 
+                              alt={file.name} 
+                              class="object-contain max-w-full max-h-[150px]"
+                            />
+                          </div>
+                        {:else}
+                          <div class="flex items-center gap-2 px-2.5 py-1.5 bg-black/15 border border-white/10 rounded-lg text-[11px]">
+                            <span>📄</span>
+                            <span class="font-mono truncate max-w-[150px]" title={file.name}>{file.name}</span>
+                          </div>
+                        {/if}
+                      {/each}
+                    </div>
+                  {/if}
                 </div>
               </div>
             {/if}

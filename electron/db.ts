@@ -214,7 +214,8 @@ export async function addMessage(
   role: string,
   content: string,
   toolCalls?: any[],
-  toolCallId?: string
+  toolCallId?: string,
+  files?: any[]
 ): Promise<void> {
   const chatFolder = path.join(CHATS_DIR, chatId);
   const messagesPath = path.join(chatFolder, 'messages.json');
@@ -237,6 +238,9 @@ export async function addMessage(
   }
   if (toolCallId !== undefined) {
     messageObj.tool_call_id = toolCallId;
+  }
+  if (files !== undefined) {
+    messageObj.files = files;
   }
 
   if (index !== -1) {
