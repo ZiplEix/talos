@@ -747,7 +747,7 @@ export async function executeTool(name: string, args: any, chatId?: string): Pro
 }
 
 // Return OpenAI JSON schema definitions for the tools
-export function getOpenAITools() {
+export function getBuiltinTools() {
   const builtin = [
     {
       type: 'function',
@@ -1038,12 +1038,38 @@ export function getOpenAITools() {
     },
 
   ];
-  return [...builtin, ...getPluginTools()];
+  return builtin;
 }
 
-export function getOpenAIToolsForMode(mode: string): any[] {
+export async function getOpenAITools(chatId?: string): Promise<any[]> {
+  const builtin = getBuiltinTools();
+  const pluginTools: any[] = [];
+  const { getLoadedPlugins } = require('./pluginManager');
+  const { getSetting } = require('./db');
+
+  const plugins = getLoadedPlugins();
+  if (chatId) {
+    for (const p of plugins) {
+      const enabled = await getSetting(`chat_${chatId}_plugin_${p.id}_enabled`, 'false') === 'true';
+      if (enabled && p.tools) {
+        pluginTools.push(...p.tools);
+      }
+    }
+  } else {
+    for (const p of plugins) {
+      if (p.tools) {
+        pluginTools.push(...p.tools);
+      }
+    }
+  }
+
+  return [...builtin, ...pluginTools];
+}
+
+export async function getOpenAIToolsForMode(mode: string, chatId?: string): Promise<any[]> {
   // Exclude SendEmail from all standard chat loops. It's only for scheduled tasks.
-  const tools = getOpenAITools().filter(t => t.function.name !== 'SendEmail');
+  const allTools = await getOpenAITools(chatId);
+  const tools = allTools.filter(t => t.function.name !== 'SendEmail');
   if (mode === 'agent') {
     return tools;
   }

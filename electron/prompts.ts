@@ -80,7 +80,7 @@ export async function getSystemPrompt(mode: string, chatId?: string): Promise<st
       : true;
     const subagentsAllowed = globalSubagentsEnabled && chatSubagentsEnabled;
 
-    let tools = getOpenAIToolsForMode(mode);
+    let tools = await getOpenAIToolsForMode(mode, chatId);
     if (!subagentsAllowed) {
       tools = tools.filter(t => t.function.name !== 'run_parallel_agents');
     }
