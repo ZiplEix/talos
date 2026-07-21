@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import { getSetting, getSchedules, createChat, addMessage } from './db';
+import { app } from 'electron';
+import { exec } from 'child_process';
 
 export interface Plugin {
   id: string;
@@ -11,6 +13,14 @@ export interface Plugin {
     key: string;
     label: string;
     type: 'text' | 'password' | 'number' | 'boolean';
+    default?: any;
+    required?: boolean;
+  }>;
+  chatConfigFields?: Array<{
+    key: string;
+    label: string;
+    type: 'text' | 'password' | 'number' | 'boolean';
+    placeholder?: string;
     default?: any;
     required?: boolean;
   }>;
@@ -35,15 +45,45 @@ export async function loadPlugins(pluginsDir: string): Promise<void> {
       fs.mkdirSync(pluginsDir, { recursive: true });
     }
 
-    const files = fs.readdirSync(pluginsDir);
+    const items = fs.readdirSync(pluginsDir);
     loadedPlugins = [];
 
-    for (const file of files) {
-      if (file.endsWith('.js') || file.endsWith('.ts')) {
+    for (const item of items) {
+      if (item === '.' || item === '..') continue;
+      
+      const itemPath = path.join(pluginsDir, item);
+      const stat = fs.statSync(itemPath);
+
+      let pluginPath = '';
+      if (stat.isDirectory()) {
+        const pkgPath = path.join(itemPath, 'package.json');
+        if (fs.existsSync(pkgPath)) {
+          try {
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+            const entry = pkg.main || 'index.js';
+            pluginPath = path.join(itemPath, entry);
+          } catch (e) {
+            console.error(`[PluginManager] Failed to read package.json in ${itemPath}:`, e);
+            continue;
+          }
+        } else {
+          // If directory has no package.json, default to index.js
+          const indexPath = path.join(itemPath, 'index.js');
+          if (fs.existsSync(indexPath)) {
+            pluginPath = indexPath;
+          } else {
+            continue;
+          }
+        }
+      } else if (item.endsWith('.js') || item.endsWith('.ts')) {
+        pluginPath = itemPath;
+      } else {
+        continue;
+      }
+
+      if (fs.existsSync(pluginPath)) {
         try {
-          const pluginPath = path.join(pluginsDir, file);
           const fileUrl = pathToFileURL(pluginPath).href;
-          
           // Dynamically import ESM module
           const module = await import(fileUrl);
           const plugin: Plugin = module.default || module;
@@ -52,10 +92,10 @@ export async function loadPlugins(pluginsDir: string): Promise<void> {
             loadedPlugins.push(plugin);
             console.log(`[PluginManager] Loaded plugin: ${plugin.name} (${plugin.id})`);
           } else {
-            console.warn(`[PluginManager] Skipped invalid plugin in file ${file}: missing 'id' or 'name' property.`);
+            console.warn(`[PluginManager] Skipped invalid plugin from ${pluginPath}: missing 'id' or 'name' property.`);
           }
         } catch (err) {
-          console.error(`[PluginManager] Failed to load plugin file ${file}:`, err);
+          console.error(`[PluginManager] Failed to load plugin from ${pluginPath}:`, err);
         }
       }
     }
@@ -114,7 +154,8 @@ export function getPluginConfigSchemas() {
     id: p.id,
     name: p.name,
     description: p.description,
-    configFields: p.configFields || []
+    configFields: p.configFields || [],
+    chatConfigFields: p.chatConfigFields || []
   }));
 }
 
@@ -142,6 +183,12 @@ export async function executePluginTool(
 ): Promise<string | null> {
   for (const plugin of loadedPlugins) {
     if (plugin.executeTool && plugin.tools?.some(t => t.function.name === name)) {
+      if (chatId) {
+        const enabled = await getSetting(`chat_${chatId}_plugin_${plugin.id}_enabled`, 'false') === 'true';
+        if (!enabled) {
+          return `error: Le plugin '${plugin.name}' est désactivé pour cette discussion.`;
+        }
+      }
       try {
         const result = await plugin.executeTool(name, args, chatId);
         if (result !== null) return result;
@@ -186,4 +233,84 @@ export async function executePluginSlashCommand(
     }
   }
   return null;
+}
+
+/**
+ * Seeds the default plugins from the codebase's root "pluggins" folder to the user's plugin directory.
+ */
+export async function seedDefaultPlugins(userPluginsDir: string): Promise<void> {
+  try {
+    if (!fs.existsSync(userPluginsDir)) {
+      fs.mkdirSync(userPluginsDir, { recursive: true });
+    }
+
+    const srcDir = path.join(app.getAppPath(), 'pluggins');
+    if (fs.existsSync(srcDir)) {
+      const items = fs.readdirSync(srcDir);
+      for (const item of items) {
+        if (item === '.' || item === '..') continue;
+
+        const srcPath = path.join(srcDir, item);
+        const destPath = path.join(userPluginsDir, item);
+
+        const stat = fs.statSync(srcPath);
+        if (stat.isDirectory()) {
+          if (!fs.existsSync(destPath)) {
+            // Copy folder structure recursively
+            fs.cpSync(srcPath, destPath, { recursive: true });
+            console.log(`[PluginManager] Seeded default plugin directory: ${item}`);
+
+            // Install dependencies if package.json is present and node_modules is missing
+            const pkgPath = path.join(destPath, 'package.json');
+            const nodeModulesPath = path.join(destPath, 'node_modules');
+            if (fs.existsSync(pkgPath) && !fs.existsSync(nodeModulesPath)) {
+              try {
+                console.log(`[PluginManager] Installing dependencies for seeded plugin ${item}...`);
+                await installPluginDependencies(destPath);
+              } catch (err) {
+                console.error(`[PluginManager] Failed to install dependencies for seeded plugin ${item}:`, err);
+              }
+            }
+          }
+        } else {
+          // If it's a standalone file
+          if (!fs.existsSync(destPath)) {
+            fs.copyFileSync(srcPath, destPath);
+            console.log(`[PluginManager] Seeded default plugin file: ${item}`);
+          }
+        }
+      }
+    } else {
+      console.warn(`[PluginManager] Source default plugins folder not found at ${srcDir}`);
+    }
+  } catch (e) {
+    console.error('[PluginManager] Failed to seed default plugins:', e);
+  }
+}
+
+/**
+ * Runs npm/bun install inside the plugin directory to resolve local package.json dependencies.
+ */
+export function installPluginDependencies(pluginPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let cmd = 'bun install';
+    if (fs.existsSync(path.join(pluginPath, 'package-lock.json'))) {
+      cmd = 'npm install';
+    } else if (fs.existsSync(path.join(pluginPath, 'pnpm-lock.yaml'))) {
+      cmd = 'pnpm install';
+    } else if (fs.existsSync(path.join(pluginPath, 'yarn.lock'))) {
+      cmd = 'yarn install';
+    }
+
+    console.log(`[PluginManager] Running '${cmd}' in ${pluginPath}...`);
+    exec(cmd, { cwd: pluginPath }, (error, stdout, stderr) => {
+      if (error) {
+        console.error(`[PluginManager] Failed to install dependencies in ${pluginPath}:`, error);
+        reject(error);
+      } else {
+        console.log(`[PluginManager] Dependencies installed successfully in ${pluginPath}.`);
+        resolve();
+      }
+    });
+  });
 }

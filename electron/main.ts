@@ -8,7 +8,7 @@ import { initDb, getChats, createChat, deleteChat, renameChat, updateChatMode, g
 import { getOpenAITools, getOpenAIToolsForMode, executeTool, getToolParamValue, isCommandSafe, getToolPath, isPathAllowed } from './tools';
 import { getSystemPrompt, getSubAgentPrompt } from './prompts';
 import os from 'os';
-import { loadPlugins, initializePlugins, getPluginConfigSchemas, getPluginSlashCommands, executePluginSlashCommand, getLoadedPlugins } from './pluginManager';
+import { loadPlugins, initializePlugins, getPluginConfigSchemas, getPluginSlashCommands, executePluginSlashCommand, getLoadedPlugins, seedDefaultPlugins, installPluginDependencies } from './pluginManager';
 import { TEMPLATE_VARIABLES, TEMPLATE_SYNTAX_HELP } from './promptVariables';
 import { initScheduler, runTaskNow, triggerSchedulerCheck, computeNextRun } from './scheduler';
 
@@ -261,8 +261,104 @@ ipcMain.handle('plugins:get-loaded-list', async () => {
   return getLoadedPlugins().map(p => ({
     id: p.id,
     name: p.name,
-    description: p.description || ''
+    description: p.description || '',
+    chatConfigFields: p.chatConfigFields || []
   }));
+});
+
+ipcMain.handle('plugins:install', async (_, source: { type: 'local_folder' | 'local_zip' | 'git'; gitUrl?: string }) => {
+  try {
+    const pluginsDir = path.join(os.homedir(), '.talos', 'pluggins');
+    let destPath = '';
+
+    if (source.type === 'local_folder') {
+      const res = await dialog.showOpenDialog(mainWindow!, {
+        properties: ['openDirectory'],
+        title: 'Sélectionner le dossier du plugin'
+      });
+      if (res.canceled || res.filePaths.length === 0) {
+        return { success: false, error: 'Annulé par l\'utilisateur' };
+      }
+      const srcPath = res.filePaths[0];
+      const folderName = path.basename(srcPath);
+      destPath = path.join(pluginsDir, folderName);
+      
+      const fs = await import('fs');
+      fs.cpSync(srcPath, destPath, { recursive: true });
+      console.log(`[Plugins] Copied folder ${srcPath} to ${destPath}`);
+
+    } else if (source.type === 'local_zip') {
+      const res = await dialog.showOpenDialog(mainWindow!, {
+        properties: ['openFile'],
+        filters: [{ name: 'Zip Archives', extensions: ['zip'] }],
+        title: 'Sélectionner l\'archive ZIP du plugin'
+      });
+      if (res.canceled || res.filePaths.length === 0) {
+        return { success: false, error: 'Annulé par l\'utilisateur' };
+      }
+      const zipPath = res.filePaths[0];
+      const archiveName = path.basename(zipPath, '.zip');
+      destPath = path.join(pluginsDir, archiveName);
+
+      const fs = await import('fs');
+      if (fs.existsSync(destPath)) {
+        fs.rmSync(destPath, { recursive: true, force: true });
+      }
+      fs.mkdirSync(destPath, { recursive: true });
+
+      // Run native unzip command on macOS
+      await new Promise<void>((resolve, reject) => {
+        const { exec } = require('child_process');
+        exec(`unzip -q -o "${zipPath}" -d "${destPath}"`, (error: any) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+      console.log(`[Plugins] Unzipped archive ${zipPath} to ${destPath}`);
+
+    } else if (source.type === 'git') {
+      const gitUrl = source.gitUrl;
+      if (!gitUrl) {
+        return { success: false, error: 'URL Git manquante' };
+      }
+      const repoName = gitUrl.split('/').pop()?.replace(/\.git$/, '') || `git-plugin-${Date.now()}`;
+      destPath = path.join(pluginsDir, repoName);
+
+      const fs = await import('fs');
+      if (fs.existsSync(destPath)) {
+        fs.rmSync(destPath, { recursive: true, force: true });
+      }
+
+      // Run git clone command
+      await new Promise<void>((resolve, reject) => {
+        const { exec } = require('child_process');
+        exec(`git clone "${gitUrl}" "${destPath}"`, (error: any) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+      console.log(`[Plugins] Cloned git repo ${gitUrl} to ${destPath}`);
+    } else {
+      return { success: false, error: 'Type d\'installation non supporté' };
+    }
+
+    // Run dependency installer if package.json exists
+    const fs = await import('fs');
+    const pkgPath = path.join(destPath, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      console.log(`[Plugins] Found package.json in ${destPath}. Running installer...`);
+      await installPluginDependencies(destPath);
+    }
+
+    // Reload all plugins
+    await loadPlugins(pluginsDir);
+    await initializePlugins();
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('[Plugins] Error installing plugin:', err);
+    return { success: false, error: err.message || String(err) };
+  }
 });
 
 // Handler pour récupérer le chemin de la base de données
@@ -418,8 +514,6 @@ ipcMain.handle('cwd:select', async (_, chatId) => {
     process.chdir(selectedPath);
     if (chatId) {
       await setSetting(`chat_${chatId}_cwd`, selectedPath);
-    } else {
-      await setSetting('talos_cwd', selectedPath);
     }
     console.log('Working directory changed to:', selectedPath);
   } catch (err) {
@@ -437,6 +531,10 @@ ipcMain.handle('cwd:set', (_, newPath) => {
     console.error(`Failed to change directory to ${newPath}:`, err);
     return false;
   }
+});
+
+ipcMain.handle('app:home-path', () => {
+  return app.getPath('home');
 });
 
 // Handler pour l'exécution d'appels d'API OpenAI / Ollama
@@ -766,18 +864,9 @@ ipcMain.on('openai:chat-stream-start', async (event, providerId: string, model: 
     const chatSubagentsEnabled = (await getSetting(`chat_${chatId}_subagents_enabled`, 'true')) === 'true';
     const subagentsAllowed = globalSubagentsEnabled && chatSubagentsEnabled;
 
-    let toolsForMode = getOpenAIToolsForMode(mode);
+    let toolsForMode = await getOpenAIToolsForMode(mode, chatId);
     if (!subagentsAllowed) {
       toolsForMode = toolsForMode.filter(t => t.function.name !== 'run_parallel_agents');
-    }
-
-    const chatEmailEnabled = (await getSetting(`chat_${chatId}_email_enabled`, 'false')) === 'true';
-    if (chatEmailEnabled) {
-      const allTools = getOpenAITools();
-      const sendEmailTool = allTools.find(t => t.function.name === 'SendEmail');
-      if (sendEmailTool && !toolsForMode.some(t => t.function.name === 'SendEmail')) {
-        toolsForMode.push(sendEmailTool);
-      }
     }
 
     // Assainir l'historique et injecter le prompt système
@@ -1161,28 +1250,19 @@ app.whenReady().then(async () => {
     // Load and initialize plugins from ~/.talos/pluggins
     try {
       const pluginsDir = path.join(os.homedir(), '.talos', 'pluggins');
+      await seedDefaultPlugins(pluginsDir);
       await loadPlugins(pluginsDir);
       await initializePlugins();
     } catch (e) {
       console.error('Failed to load/initialize plugins on startup:', e);
     }
 
-    let savedCwd = await getSetting('talos_cwd', '');
-    if (!savedCwd) {
-      try {
-        savedCwd = app.getPath('home');
-        await setSetting('talos_cwd', savedCwd);
-      } catch (e) {
-        console.error('Failed to get home path for CWD:', e);
-      }
-    }
-    if (savedCwd) {
-      try {
-        process.chdir(savedCwd);
-        console.log('Restored working directory on startup to:', savedCwd);
-      } catch (e) {
-        console.error('Failed to restore working directory on startup:', e);
-      }
+    try {
+      const homePath = app.getPath('home');
+      process.chdir(homePath);
+      console.log('Defaulted process directory on startup to:', homePath);
+    } catch (e) {
+      console.error('Failed to set working directory to home on startup:', e);
     }
   } catch (err) {
     console.error('Erreur lors de l\'initialisation de la base de données :', err);

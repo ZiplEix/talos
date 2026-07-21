@@ -22,6 +22,54 @@
   let pluginSchemas = $state<any[]>([]);
   let pluginSettings = $state<Record<string, Record<string, string>>>({});
 
+  let showInstallModal = $state(false);
+  let installType = $state<'folder' | 'zip' | 'git'>('folder');
+  let gitUrl = $state('');
+  let installing = $state(false);
+  let statusMessage = $state('');
+  let errorMessage = $state('');
+
+  function closeInstallModal() {
+    showInstallModal = false;
+    gitUrl = '';
+    installing = false;
+    statusMessage = '';
+    errorMessage = '';
+  }
+
+  async function handleInstall() {
+    errorMessage = '';
+    
+    if (installType === 'git' && !gitUrl.trim()) {
+      errorMessage = "Veuillez renseigner l'URL du dépôt Git.";
+      return;
+    }
+
+    try {
+      installing = true;
+      if (installType === 'folder') {
+        statusMessage = "Sélection du dossier local...";
+        const res = await window.talosAPI.installPlugin({ type: 'local_folder' });
+        if (!res.success) throw new Error(res.error);
+      } else if (installType === 'zip') {
+        statusMessage = "Sélection de l'archive ZIP...";
+        const res = await window.talosAPI.installPlugin({ type: 'local_zip' });
+        if (!res.success) throw new Error(res.error);
+      } else if (installType === 'git') {
+        statusMessage = "Clonage du dépôt Git...";
+        const res = await window.talosAPI.installPlugin({ type: 'git', gitUrl: gitUrl.trim() });
+        if (!res.success) throw new Error(res.error);
+      }
+
+      statusMessage = "Rechargement...";
+      await loadPluginsConfig();
+      closeInstallModal();
+    } catch (e: any) {
+      installing = false;
+      errorMessage = e.message || "Une erreur est survenue lors de l'installation.";
+    }
+  }
+
   async function loadPluginsConfig() {
     if (window.talosAPI && window.talosAPI.getPluginsConfigSchemas) {
       try {
@@ -353,6 +401,19 @@
     <!-- PLUGINS TAB -->
     {#if activeTab === 'plugins'}
       <div class="space-y-6">
+        <div class="flex items-center justify-between">
+          <div class="space-y-1">
+            <h2 class="text-lg font-bold text-slate-200">Gestion des Plugins</h2>
+            <p class="text-xs text-slate-400 font-medium">Configurez ou importez de nouvelles fonctionnalités.</p>
+          </div>
+          <button
+            onclick={() => showInstallModal = true}
+            class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold uppercase tracking-wider px-4 py-2.5 rounded-xl transition-all shadow-lg hover:shadow-indigo-500/20 cursor-pointer"
+          >
+            Installer un plugin
+          </button>
+        </div>
+
         {#if pluginSchemas.length === 0}
           <div class="bg-[#0b0f19] border border-slate-800/60 rounded-2xl p-6 text-slate-400 text-sm italic text-center">
             Aucun plugin nécessitant une configuration n'est actuellement chargé dans <code class="bg-slate-950 px-1.5 py-0.5 rounded font-mono text-indigo-400 text-xs">~/.talos/pluggins</code>.
@@ -405,6 +466,104 @@
             </div>
           {/each}
         {/if}
+      </div>
+    {/if}
+
+    <!-- PLUGIN INSTALL MODAL -->
+    {#if showInstallModal}
+      <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm transition-opacity duration-300">
+        <div class="bg-[#0b0f19] border border-slate-800/80 rounded-2xl w-full max-w-lg p-6 space-y-6 shadow-2xl relative">
+          <!-- Header -->
+          <div class="flex items-center justify-between border-b border-slate-900/60 pb-3">
+            <h3 class="text-sm font-bold text-slate-200 uppercase tracking-wider">Installer un nouveau plugin</h3>
+            <button 
+              onclick={closeInstallModal}
+              class="text-slate-400 hover:text-slate-200 transition-colors cursor-pointer text-sm"
+            >
+              ✕
+            </button>
+          </div>
+
+          {#if !installing}
+            <!-- Option selector tabs -->
+            <div class="grid grid-cols-3 gap-2">
+              <button
+                onclick={() => installType = 'folder'}
+                class="px-3 py-2 text-xs font-bold rounded-lg border cursor-pointer text-center {installType === 'folder' ? 'bg-indigo-600/10 border-indigo-500/50 text-indigo-400' : 'bg-slate-950/40 border-slate-800/60 text-slate-400 hover:text-slate-300'}"
+              >
+                Dossier
+              </button>
+              <button
+                onclick={() => installType = 'zip'}
+                class="px-3 py-2 text-xs font-bold rounded-lg border cursor-pointer text-center {installType === 'zip' ? 'bg-indigo-600/10 border-indigo-500/50 text-indigo-400' : 'bg-slate-950/40 border-slate-800/60 text-slate-400 hover:text-slate-300'}"
+              >
+                Archive ZIP
+              </button>
+              <button
+                onclick={() => installType = 'git'}
+                class="px-3 py-2 text-xs font-bold rounded-lg border cursor-pointer text-center {installType === 'git' ? 'bg-indigo-600/10 border-indigo-500/50 text-indigo-400' : 'bg-slate-950/40 border-slate-800/60 text-slate-400 hover:text-slate-300'}"
+              >
+                Dépôt Git
+              </button>
+            </div>
+
+            <div class="space-y-4">
+              {#if installType === 'folder'}
+                <p class="text-xs text-slate-400 leading-relaxed">
+                  Sélectionnez un dossier de plugin local contenant un fichier `package.json` ou un point d'entrée `index.js`.
+                </p>
+              {:else if installType === 'zip'}
+                <p class="text-xs text-slate-400 leading-relaxed">
+                  Sélectionnez un fichier d'archive ZIP du plugin à extraire.
+                </p>
+              {:else if installType === 'git'}
+                <p class="text-xs text-slate-400 leading-relaxed">
+                  Renseignez le lien vers le dépôt Git public du plugin pour le cloner et l'installer.
+                </p>
+              {/if}
+
+              {#if installType === 'git'}
+                <div class="space-y-1.5">
+                  <label class="text-xs font-bold text-slate-400 uppercase tracking-wider block">URL du dépôt Git</label>
+                  <input
+                    type="text"
+                    bind:value={gitUrl}
+                    placeholder="https://github.com/utilisateur/mon-plugin.git"
+                    class="w-full bg-slate-950/60 border border-slate-800/80 focus:border-indigo-500/40 rounded-xl px-4 py-2.5 text-sm text-slate-200 outline-none transition-all"
+                  />
+                </div>
+              {/if}
+
+              {#if errorMessage}
+                <p class="text-xs text-rose-500 bg-rose-500/5 border border-rose-500/10 p-3 rounded-lg">
+                  {errorMessage}
+                </p>
+              {/if}
+            </div>
+
+            <!-- Actions -->
+            <div class="flex justify-end gap-3 pt-3 border-t border-slate-900/60">
+              <button
+                onclick={closeInstallModal}
+                class="bg-slate-950 border border-slate-800 hover:text-slate-300 text-slate-400 text-xs font-bold uppercase tracking-wider px-4 py-2.5 rounded-xl cursor-pointer font-semibold"
+              >
+                Annuler
+              </button>
+              <button
+                onclick={handleInstall}
+                class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold uppercase tracking-wider px-4 py-2.5 rounded-xl transition-all shadow-lg hover:shadow-indigo-500/20 cursor-pointer font-semibold"
+              >
+                {installType === 'git' ? 'Télécharger & Installer' : 'Parcourir & Installer'}
+              </button>
+            </div>
+          {:else}
+            <!-- Installing status -->
+            <div class="py-12 flex flex-col items-center justify-center space-y-4">
+              <div class="animate-spin rounded-full h-8 w-8 border-t-2 border-indigo-500"></div>
+              <p class="text-xs font-bold text-indigo-400 uppercase tracking-wider animate-pulse">{statusMessage}</p>
+            </div>
+          {/if}
+        </div>
       </div>
     {/if}
 
