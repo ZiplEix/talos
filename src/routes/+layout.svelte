@@ -105,6 +105,10 @@
     event.stopPropagation();
     event.preventDefault();
 
+    if (!confirm('Voulez-vous vraiment supprimer cette discussion ?')) {
+      return;
+    }
+
     if (window.talosAPI) {
       try {
         await window.talosAPI.deleteChat(id);
