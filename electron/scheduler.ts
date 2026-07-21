@@ -89,32 +89,16 @@ export function computeNextRun(task: ScheduledTask): number | null {
 
 // ── Sélection des outils selon les options ───────────────────────────────
 
-function getToolsForTask(task: ScheduledTask): any[] {
-  const allTools = getOpenAITools();
-  let allowedTools: any[] = [];
+async function getToolsForTask(task: ScheduledTask): Promise<any[]> {
+  const allTools = await getOpenAITools(task.chat_id);
+  let allowedTools = [...allTools];
 
-  if (task.workspace) {
-    // Workspace : tous les outils sauf run_parallel_agents
-    allowedTools = allTools.filter(t => t.function.name !== 'run_parallel_agents');
-  } else if (task.internet_access) {
-    // Internet seulement : outils web + artifacts
-    const allowed = new Set(['FetchWebPage', 'BrowseWebPage', 'GoogleSearch',
-      'WriteArtifact', 'ReadArtifact', 'ReplaceInArtifact', 'ListArtifacts']);
-    allowedTools = allTools.filter(t => allowed.has(t.function.name));
+  if (!task.workspace) {
+    // Mode bac à sable (pas d'écriture ni d'exécution bash locale)
+    const sandboxExcludes = ['Write', 'Mkdir', 'Bash', 'ReplaceInFile', 'run_parallel_agents'];
+    allowedTools = allowedTools.filter(t => !sandboxExcludes.includes(t.function.name));
   } else {
-    // Aucun outil par défaut
-    allowedTools = [];
-  }
-
-  // Si allow_email est activé, s'assurer que SendEmail est inclus dans allowedTools
-  if (task.allow_email) {
-    const sendEmailTool = allTools.find(t => t.function.name === 'SendEmail');
-    if (sendEmailTool && !allowedTools.some(t => t.function.name === 'SendEmail')) {
-      allowedTools.push(sendEmailTool);
-    }
-  } else {
-    // Sinon, on s'assure qu'il est exclu
-    allowedTools = allowedTools.filter(t => t.function.name !== 'SendEmail');
+    allowedTools = allowedTools.filter(t => t.function.name !== 'run_parallel_agents');
   }
 
   return allowedTools;
@@ -149,7 +133,7 @@ export async function runTaskNow(
     await addMessage(userMsgId, task.chat_id, 'user', task.instructions);
 
     // 3. Déterminer les outils disponibles
-    const tools = getToolsForTask(task);
+    const tools = await getToolsForTask(task);
     const hasTools = tools.length > 0;
     const hasWorkspace = !!task.workspace;
 

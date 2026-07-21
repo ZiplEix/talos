@@ -89,7 +89,6 @@ declare global {
 				provider_id: string;
 				model: string;
 				workspace?: string;
-				internet_access: boolean;
 				enabled: boolean;
 				created_at: number;
 				updated_at: number;

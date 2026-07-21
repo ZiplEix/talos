@@ -402,9 +402,6 @@ export interface ScheduledTask {
   provider_id: string;
   model: string;
   workspace?: string;              // dossier de travail optionnel (CWD pour l'exécution)
-  internet_access: boolean;        // accès aux outils internet (FetchWebPage, BrowseWebPage, GoogleSearch)
-  allow_email?: boolean;           // autorisation d'envoyer des e-mails
-  email_recipients?: string;       // destinataires des e-mails
   enabled: boolean;
   created_at: number;
   updated_at: number;

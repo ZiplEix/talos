@@ -19,9 +19,6 @@
     provider_id: string;
     model: string;
     workspace?: string;
-    internet_access: boolean;
-    allow_email?: boolean;
-    email_recipients?: string;
     enabled: boolean;
     created_at: number;
     updated_at: number;
@@ -33,6 +30,7 @@
   }
 
   let tasks = $state<ScheduledTask[]>([]);
+  let taskEnabledPluginsMap = $state<Record<string, string[]>>({});
   let isLoading = $state(true);
 
   // Modal state
@@ -46,10 +44,11 @@
   let modalProvider = $state('');
   let modalModel = $state('');
   let modalWorkspace = $state('');
-  let modalInternet = $state(false);
-  let modalAllowEmail = $state(false);
-  let modalEmailRecipients = $state('');
   let modalError = $state('');
+
+  let loadedPluginsList = $state<any[]>([]);
+  let enabledPlugins = $state<Record<string, boolean>>({});
+  let chatPluginSettings = $state<Record<string, Record<string, string>>>({});
 
   let providersList = $state<Array<{ id: string; name: string }>>([]);
   let modelsList = $state<Array<{ id: string; name: string }>>([]);
@@ -78,11 +77,54 @@
     if (window.talosAPI) {
       try {
         tasks = await window.talosAPI.getSchedules();
+
+        if (window.talosAPI.getLoadedPluginsList) {
+          const list = await window.talosAPI.getLoadedPluginsList();
+          const map: Record<string, string[]> = {};
+          for (const t of tasks) {
+            map[t.id] = [];
+            const chatId = t.chat_id || `sched-${t.id}`;
+            for (const p of list) {
+              const val = await window.talosAPI.getSetting(`chat_${chatId}_plugin_${p.id}_enabled`, 'false');
+              if (val === 'true') {
+                map[t.id].push(p.name);
+              }
+            }
+          }
+          taskEnabledPluginsMap = map;
+        }
       } catch (err) {
         console.error('Failed to load schedules:', err);
       }
     }
     isLoading = false;
+  }
+
+  async function loadPluginsForTask(chatId: string) {
+    if (window.talosAPI && window.talosAPI.getLoadedPluginsList) {
+      try {
+        const list = await window.talosAPI.getLoadedPluginsList();
+        loadedPluginsList = list;
+        const map: Record<string, boolean> = {};
+        const chatSettings: Record<string, Record<string, string>> = {};
+        for (const p of list) {
+          const val = await window.talosAPI.getSetting(`chat_${chatId}_plugin_${p.id}_enabled`, 'false');
+          map[p.id] = (val === 'true');
+
+          chatSettings[p.id] = {};
+          if (p.chatConfigFields) {
+            for (const field of p.chatConfigFields) {
+              const fieldVal = await window.talosAPI.getSetting(`chat_${chatId}_plugin_${p.id}_${field.key}`, String(field.default ?? ''));
+              chatSettings[p.id][field.key] = fieldVal;
+            }
+          }
+        }
+        enabledPlugins = map;
+        chatPluginSettings = chatSettings;
+      } catch (err) {
+        console.error('Failed to load plugins status for task:', err);
+      }
+    }
   }
 
   async function loadProviders() {
@@ -134,13 +176,14 @@
     modalValue = '0 9 * * *';
     modalInstructions = '';
     modalWorkspace = '';
-    modalInternet = false;
-    modalAllowEmail = false;
-    modalEmailRecipients = '';
     modalProvider = providersList[0]?.id || '';
     modalModel = '';
     modalError = '';
     if (modalProvider) loadModels(modalProvider);
+
+    const tempId = Math.random().toString(36).substring(2, 9);
+    loadPluginsForTask(`sched-${tempId}`);
+
     showModal = true;
   }
 
@@ -152,13 +195,13 @@
     modalValue = task.schedule_value;
     modalInstructions = task.instructions;
     modalWorkspace = task.workspace || '';
-    modalInternet = task.internet_access ?? false;
-    modalAllowEmail = task.allow_email ?? false;
-    modalEmailRecipients = task.email_recipients || '';
     modalProvider = task.provider_id;
     modalModel = task.model;
     modalError = '';
     loadModels(task.provider_id, true);
+
+    loadPluginsForTask(task.chat_id || `sched-${task.id}`);
+
     showModal = true;
   }
 
@@ -191,12 +234,21 @@
       modalError = 'Veuillez sélectionner un modèle.';
       return;
     }
-    if (modalAllowEmail && !modalEmailRecipients.trim()) {
-      modalError = "Veuillez renseigner au moins un destinataire pour les e-mails.";
-      return;
+
+    // Validation des plugins
+    for (const p of loadedPluginsList) {
+      if (enabledPlugins[p.id] && p.chatConfigFields) {
+        for (const field of p.chatConfigFields) {
+          if (field.required && !(chatPluginSettings[p.id]?.[field.key]?.trim())) {
+            modalError = `Le champ '${field.label}' du plugin '${p.name}' est requis.`;
+            return;
+          }
+        }
+      }
     }
 
     const taskId = editingTask?.id || Math.random().toString(36).substring(2, 9);
+    const chatId = editingTask?.chat_id || `sched-${taskId}`;
 
     const task: ScheduledTask = {
       id: taskId,
@@ -208,9 +260,6 @@
       provider_id: modalProvider,
       model: modalModel,
       workspace: modalWorkspace.trim() || undefined,
-      internet_access: modalInternet,
-      allow_email: modalAllowEmail,
-      email_recipients: modalEmailRecipients.trim() || undefined,
       enabled: editingTask?.enabled ?? true,
       created_at: editingTask?.created_at ?? Date.now(),
       updated_at: Date.now(),
@@ -218,12 +267,26 @@
       last_result: editingTask?.last_result ?? null,
       next_run: editingTask?.next_run ?? null,
       total_runs: editingTask?.total_runs ?? 0,
-      chat_id: editingTask?.chat_id || `sched-${taskId}`,
+      chat_id: chatId,
     };
 
     if (window.talosAPI) {
       try {
         await window.talosAPI.saveSchedule(task);
+
+        // Sauvegarde de l'activation et configuration des plugins
+        for (const p of loadedPluginsList) {
+          const isEnabled = !!enabledPlugins[p.id];
+          await window.talosAPI.setSetting(`chat_${chatId}_plugin_${p.id}_enabled`, String(isEnabled));
+
+          if (p.chatConfigFields) {
+            for (const field of p.chatConfigFields) {
+              const val = chatPluginSettings[p.id]?.[field.key] || '';
+              await window.talosAPI.setSetting(`chat_${chatId}_plugin_${p.id}_${field.key}`, val);
+            }
+          }
+        }
+
         await loadData();
         closeModal();
       } catch (err: any) {
@@ -372,18 +435,16 @@
                 <span>Modèle : {task.model}</span>
               </div>
 
-              <div class="flex flex-wrap gap-x-2 gap-y-1">
-                {#if task.internet_access}
-                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border border-sky-500/20 bg-sky-950/10 text-sky-400">🌐 Internet</span>
-                {/if}
-                {#if task.allow_email}
-                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border border-amber-500/20 bg-amber-950/10 text-amber-400">✉️ E-mail</span>
-                {/if}
+              <div class="flex flex-wrap gap-x-2 gap-y-1 font-sans">
                 {#if task.workspace}
                   <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-500/20 bg-emerald-950/10 text-emerald-400">📁 Workspace</span>
                 {/if}
-                {#if !task.internet_access && !task.workspace && !task.allow_email}
-                  <span class="text-[10px] text-slate-600 italic">Réponse simple sans outils</span>
+                {#if taskEnabledPluginsMap[task.id] && taskEnabledPluginsMap[task.id].length > 0}
+                  {#each taskEnabledPluginsMap[task.id] as pluginName}
+                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border border-sky-500/20 bg-sky-950/10 text-sky-400">🔌 {pluginName}</span>
+                  {/each}
+                {:else if !task.workspace}
+                  <span class="text-[10px] text-slate-650 italic">Réponse simple (sandbox) sans outils</span>
                 {/if}
               </div>
 
@@ -588,73 +649,71 @@
           </div>
         </div>
 
-        <!-- Capacités de l'agent -->
-        <div class="space-y-3 bg-slate-950/20 rounded-xl border border-slate-800/60 p-4">
-          <label class="text-xs font-bold text-slate-400 uppercase tracking-wider">Capacités</label>
+        <!-- Plugins de la tâche -->
+        <div class="space-y-4 bg-slate-950/20 rounded-xl border border-slate-800/60 p-4">
+          <label class="text-xs font-bold text-slate-400 uppercase tracking-wider block font-sans">Plugins autorisés</label>
 
-          <!-- Internet Access Toggle -->
-          <div class="flex items-center justify-between">
-            <div class="space-y-0.5">
-              <h3 class="text-sm font-semibold text-slate-300">Accès Internet</h3>
-              <p class="text-[11px] text-slate-500">L'agent peut effectuer des recherches web et consulter des pages.</p>
-            </div>
-            <button
-              onclick={() => modalInternet = !modalInternet}
-              class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none
-                {modalInternet ? 'bg-indigo-600' : 'bg-slate-700'}"
-            >
-              <span
-                class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out
-                  {modalInternet ? 'translate-x-4' : 'translate-x-0'}"
-              ></span>
-            </button>
-          </div>
+          {#if loadedPluginsList.length === 0}
+            <p class="text-xs text-slate-500 italic">Aucun plugin chargé dans Talos.</p>
+          {:else}
+            <div class="space-y-3">
+              {#each loadedPluginsList as plugin}
+                <div class="space-y-2 pb-2 border-b border-slate-800/40 last:border-b-0 last:pb-0">
+                  <div class="flex items-center justify-between">
+                    <div class="space-y-0.5 truncate flex-1 pr-4">
+                      <h3 class="text-sm font-semibold text-slate-300 truncate">{plugin.name}</h3>
+                      <p class="text-[11px] text-slate-500 line-clamp-2">{plugin.description || ''}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onclick={() => enabledPlugins[plugin.id] = !enabledPlugins[plugin.id]}
+                      class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none
+                        {enabledPlugins[plugin.id] ? 'bg-indigo-600' : 'bg-slate-700'}"
+                    >
+                      <span
+                        class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out
+                          {enabledPlugins[plugin.id] ? 'translate-x-4' : 'translate-x-0'}"
+                      ></span>
+                    </button>
+                  </div>
 
-          <!-- Email Access Toggle -->
-          <div class="flex items-center justify-between border-t border-slate-800/40 pt-3">
-            <div class="space-y-0.5">
-              <h3 class="text-sm font-semibold text-slate-300">Autoriser l'envoi d'e-mails</h3>
-              <p class="text-[11px] text-slate-500">Permet à l'agent d'utiliser l'outil SendEmail pour envoyer des messages.</p>
-            </div>
-            <button
-              type="button"
-              onclick={() => modalAllowEmail = !modalAllowEmail}
-              class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none
-                {modalAllowEmail ? 'bg-indigo-600' : 'bg-slate-700'}"
-            >
-              <span
-                class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out
-                  {modalAllowEmail ? 'translate-x-4' : 'translate-x-0'}"
-              ></span>
-            </button>
-          </div>
-
-          {#if modalAllowEmail}
-            <div class="space-y-1.5 border-t border-slate-800/40 pt-3">
-              <label class="text-xs font-bold text-slate-400 uppercase tracking-wider">Destinataires des e-mails</label>
-              <p class="text-[11px] text-slate-500 mb-2">Adresses e-mail de destination, séparées par des virgules.</p>
-              <input
-                type="text"
-                bind:value={modalEmailRecipients}
-                placeholder="destinataire1@mail.com, destinataire2@mail.com"
-                class="w-full bg-slate-950/60 border border-slate-800/80 focus:border-indigo-500/40 rounded-xl px-4 py-2.5 text-sm text-slate-200 placeholder-slate-600 outline-none transition-all font-mono"
-              />
+                  {#if enabledPlugins[plugin.id] && plugin.chatConfigFields && plugin.chatConfigFields.length > 0}
+                    <div class="pl-3 border-l-2 border-indigo-500/30 space-y-2 mt-2">
+                      {#each plugin.chatConfigFields as field}
+                        <div class="space-y-1">
+                          <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">{field.label}</label>
+                          <input
+                            type="text"
+                            value={chatPluginSettings[plugin.id]?.[field.key] || ''}
+                            oninput={(e) => {
+                              if (!chatPluginSettings[plugin.id]) chatPluginSettings[plugin.id] = {};
+                              chatPluginSettings[plugin.id][field.key] = e.currentTarget.value;
+                            }}
+                            placeholder={field.placeholder || (field.required ? 'Obligatoire' : 'Optionnel')}
+                            class="w-full bg-slate-950/60 border border-slate-800/80 focus:border-indigo-500/40 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-600 outline-none transition-all font-mono"
+                          />
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
             </div>
           {/if}
+        </div>
 
-          <!-- Workspace (dossier de travail) -->
-          <div class="space-y-1.5 border-t border-slate-800/40 pt-3">
-            <label class="text-sm font-semibold text-slate-300">
-              Workspace <span class="text-slate-500 font-normal text-xs">(optionnel)</span>
-            </label>
-            <p class="text-[11px] text-slate-500 mb-2">Dossier dans lequel l'agent peut lire, écrire et exécuter des commandes. Laissez vide pour un agent sans accès fichiers.</p>
-            <input
-              type="text"
-              bind:value={modalWorkspace}
-              placeholder="Chemin absolu du dossier de travail"
-              class="w-full bg-slate-950/60 border border-slate-800/80 focus:border-indigo-500/40 rounded-xl px-4 py-2.5 text-sm text-slate-200 placeholder-slate-600 outline-none transition-all font-mono"
-            />
-          </div>
+        <!-- Workspace (dossier de travail) -->
+        <div class="space-y-1.5 bg-slate-950/20 rounded-xl border border-slate-800/60 p-4">
+          <label class="text-sm font-semibold text-slate-350 block">
+            Workspace <span class="text-slate-500 font-normal text-xs">(optionnel)</span>
+          </label>
+          <p class="text-[11px] text-slate-500 mb-2">Dossier dans lequel l'agent peut lire, écrire et exécuter des commandes. Laissez vide pour un agent sans accès fichiers.</p>
+          <input
+            type="text"
+            bind:value={modalWorkspace}
+            placeholder="Chemin absolu du dossier de travail"
+            class="w-full bg-slate-950/60 border border-slate-800/80 focus:border-indigo-500/40 rounded-xl px-4 py-2.5 text-sm text-slate-200 placeholder-slate-600 outline-none transition-all font-mono"
+          />
         </div>
 
         <!-- Instructions -->
