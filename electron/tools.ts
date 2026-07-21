@@ -5,7 +5,6 @@ import { exec } from 'child_process';
 import ignore from 'ignore';
 import { BrowserWindow, app } from 'electron';
 import { getDbPath, getSetting } from './db';
-import nodemailer from 'nodemailer';
 import { marked } from 'marked';
 import { getPluginTools, executePluginTool } from './pluginManager';
 
@@ -258,80 +257,6 @@ export function handleListTool(args: any): string {
   }
 }
 
-// Handler: Send an e-mail using configured SMTP credentials to predefined recipients
-export async function handleSendEmailTool(args: any, chatId?: string): Promise<string> {
-  const { subject, body } = args;
-  if (!subject || !body) {
-    return 'error: parameters subject and body are required';
-  }
-
-  let recipients = '';
-
-  if (chatId) {
-    // 1. Check if this is running for a scheduled task
-    try {
-      const { getSchedules } = require('./db');
-      const schedules = await getSchedules();
-      const task = schedules.find((s: any) => s.chat_id === chatId);
-      if (task) {
-        recipients = task.email_recipients || '';
-      }
-    } catch (e) {
-      console.error('[Email Tool] Error reading schedules to resolve recipient:', e);
-    }
-
-    // 2. If not a task, or task didn't specify recipients, fall back to chat setting
-    if (!recipients) {
-      recipients = await getSetting(`chat_${chatId}_email_recipients`, '');
-    }
-  }
-
-  if (!recipients) {
-    return "error: Email recipients are not configured for this discussion/task. Please specify the recipient email addresses in the configuration.";
-  }
-
-  try {
-    const smtpHost = await getSetting('smtp_host', '');
-    const smtpPort = await getSetting('smtp_port', '587');
-    const smtpUser = await getSetting('smtp_user', '');
-    const smtpPass = await getSetting('smtp_pass', '');
-    const smtpFrom = await getSetting('smtp_from', 'talos@app.com');
-    const smtpSecure = await getSetting('smtp_secure', 'false') === 'true';
-
-    if (!smtpHost) {
-      return "error: SMTP is not configured. Please configure SMTP credentials in the Settings page to send real emails.";
-    }
-
-    const portNumber = parseInt(smtpPort, 10);
-
-    const transporter = nodemailer.createTransport({
-      host: smtpHost,
-      port: portNumber,
-      secure: smtpSecure,
-      auth: smtpUser && smtpPass ? {
-        user: smtpUser,
-        pass: smtpPass
-      } : undefined
-    });
-
-    // Parse text body as Markdown/HTML to support styled rich-text emails
-    const htmlBody = await marked.parse(body);
-
-    const info = await transporter.sendMail({
-      from: smtpFrom,
-      to: recipients,
-      subject: subject,
-      text: body,
-      html: htmlBody
-    });
-
-    console.log(`[Email Tool] Email successfully sent: ${info.messageId}`);
-    return `success: Email sent successfully to ${recipients} (MessageID: ${info.messageId})`;
-  } catch (error: any) {
-    console.error('Error in SendEmail tool:', error);
-    return `error: Failed to send email: ${error.message}`;
-  }
-}
 
 // Handler: Recursively display a visual tree diagram (respecting .gitignore)
 export function handleTreeTool(args: any): string {
@@ -435,177 +360,7 @@ function walkTree(
   }
 }
 
-// Handler: Fetch URL content
-export async function handleWebSearchTool(args: any): Promise<string> {
-  const url = args.url;
-  if (!url || typeof url !== 'string') {
-    return 'error: url parameter is missing or not a string';
-  }
-  try {
-    const resp = await fetch(url);
-    if (!resp.ok) {
-      return `error: fetch request failed with status code ${resp.status}`;
-    }
-    const text = await resp.text();
-    return text;
-  } catch (err: any) {
-    return `error fetching page: ${err.message}`;
-  }
-}
 
-// Handler: Browse a webpage with a headless Electron browser (JavaScript enabled)
-export async function handleBrowseWebPageTool(args: any): Promise<string> {
-  const url = args.url;
-  if (!url || typeof url !== 'string') {
-    return 'error: url parameter is missing or not a string';
-  }
-
-  // Block internal/dangerous protocols
-  const lowerUrl = url.toLowerCase().trim();
-  if (
-    lowerUrl.startsWith('file://') ||
-    lowerUrl.startsWith('chrome://') ||
-    lowerUrl.startsWith('about://') ||
-    lowerUrl.startsWith('data:') ||
-    lowerUrl.startsWith('javascript:')
-  ) {
-    return 'error: browsing internal or dangerous protocols is not allowed';
-  }
-
-  const waitMs = typeof args.wait_ms === 'number' ? args.wait_ms : 2000;
-  const extractMode = typeof args.extract_mode === 'string' ? args.extract_mode : 'text';
-
-  if (extractMode !== 'text' && extractMode !== 'html') {
-    return 'error: extract_mode must be either "text" or "html"';
-  }
-
-  if (waitMs < 100) {
-    return 'error: wait_ms must be at least 100';
-  }
-
-  const MAX_WAIT = 30000;
-  if (waitMs > MAX_WAIT) {
-    return `error: wait_ms cannot exceed ${MAX_WAIT}ms`;
-  }
-
-  let win: BrowserWindow | null = null;
-  let globalTimeout: ReturnType<typeof setTimeout> | null = null;
-
-  try {
-    win = new BrowserWindow({
-      show: false,
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        javascript: true,
-        images: false,
-        webSecurity: true,
-      },
-    });
-
-    // Global timeout security
-    const timeoutPromise = new Promise<string>((_, reject) => {
-      globalTimeout = setTimeout(() => {
-        reject(new Error(`Page load timed out after ${MAX_WAIT}ms`));
-      }, MAX_WAIT);
-    });
-
-    const loadPromise = win.loadURL(url);
-
-    await Promise.race([loadPromise, timeoutPromise]);
-
-    // Clear the timeout since the page loaded successfully
-    if (globalTimeout) {
-      clearTimeout(globalTimeout);
-      globalTimeout = null;
-    }
-
-    // Wait for JavaScript execution to complete
-    await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
-
-    // Extract content based on mode
-    let content: string;
-    if (extractMode === 'html') {
-      content = await win.webContents.executeJavaScript(
-        'document.documentElement.outerHTML'
-      );
-    } else {
-      content = await win.webContents.executeJavaScript(
-        'document.body ? document.body.innerText : ""'
-      );
-    }
-
-    return content || '(empty page)';
-  } catch (err: any) {
-    return `error browsing page: ${err.message}`;
-  } finally {
-    if (globalTimeout) {
-      clearTimeout(globalTimeout);
-    }
-    if (win && !win.isDestroyed()) {
-      try {
-        win.close();
-      } catch (e) {
-        // ignore close errors
-      }
-    }
-  }
-}
-
-// Handler: Query DuckDuckGo html search endpoint and parse results
-export async function handleGoogleSearchTool(args: any): Promise<string> {
-  const query = args.query;
-  if (!query || typeof query !== 'string') {
-    return 'error: query parameter is missing or not a string';
-  }
-  try {
-    const searchURL = 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query);
-    const resp = await fetch(searchURL, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      }
-    });
-    if (!resp.ok) {
-      return `error: search request failed with status code ${resp.status}`;
-    }
-    const html = await resp.text();
-    const alternativeBlocks = html.split('<div class="result results_links');
-    if (alternativeBlocks.length <= 1) {
-      return '[]';
-    }
-
-    interface SearchResult {
-      title: string;
-      url: string;
-      snippet: string;
-    }
-    const results: SearchResult[] = [];
-    const titleRe = /class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/;
-    const snippetRe = /class="result__snippet"[^>]*>([\s\S]*?)<\/a>/;
-
-    for (const block of alternativeBlocks.slice(1)) {
-      const titleMatch = titleRe.exec(block);
-      if (!titleMatch) continue;
-      const resURL = titleMatch[1];
-      const title = cleanHTML(titleMatch[2]);
-
-      let snippet = '';
-      const snippetMatch = snippetRe.exec(block);
-      if (snippetMatch) {
-        snippet = cleanHTML(snippetMatch[1]);
-      }
-
-      results.push({
-        title,
-        url: resURL,
-        snippet
-      });
-    }
-    return JSON.stringify(results);
-  } catch (err: any) {
-    return `error performing search request: ${err.message}`;
-  }
-}
 
 // Handler: Recursively search text in a directory or file (skips binary/massive files)
 export function handleFileSearchTool(args: any): string {
@@ -970,12 +725,7 @@ export async function executeTool(name: string, args: any, chatId?: string): Pro
       return handleListTool(args);
     case 'Tree':
       return handleTreeTool(args);
-    case 'FetchWebPage':
-      return await handleWebSearchTool(args);
-    case 'BrowseWebPage':
-      return await handleBrowseWebPageTool(args);
-    case 'GoogleSearch':
-      return await handleGoogleSearchTool(args);
+
     case 'FileSearch':
       return handleFileSearchTool(args);
     case 'ReadRange':
@@ -990,8 +740,7 @@ export async function executeTool(name: string, args: any, chatId?: string): Pro
       return handleReplaceInArtifact(args, chatId);
     case 'ListArtifacts':
       return handleListArtifacts(args, chatId);
-    case 'SendEmail':
-      return await handleSendEmailTool(args, chatId);
+
     default:
       return `error: unknown tool call ${name}`;
   }
@@ -1110,66 +859,7 @@ export function getOpenAITools() {
         }
       }
     },
-    {
-      type: 'function',
-      function: {
-        name: 'FetchWebPage',
-        description: 'Fetch the content of a webpage',
-        parameters: {
-          type: 'object',
-          properties: {
-            url: {
-              type: 'string',
-              description: 'The URL of the webpage to fetch'
-            }
-          },
-          required: ['url']
-        }
-      }
-    },
-    {
-      type: 'function',
-      function: {
-        name: 'BrowseWebPage',
-        description: 'Load a webpage in a headless browser with JavaScript execution enabled, wait for it to render, and extract the visible text or full rendered HTML. Use this instead of FetchWebPage for Single Page Applications (SPAs), pages with dynamic JavaScript-rendered content, or any page where FetchWebPage returns incomplete/minimal content.',
-        parameters: {
-          type: 'object',
-          properties: {
-            url: {
-              type: 'string',
-              description: 'The URL of the webpage to browse'
-            },
-            wait_ms: {
-              type: 'integer',
-              description: 'Time in milliseconds to wait after page load for JavaScript execution (default: 2000, min: 100, max: 30000)'
-            },
-            extract_mode: {
-              type: 'string',
-              enum: ['text', 'html'],
-              description: 'Extraction mode: "text" (default) returns visible text only, "html" returns the full rendered DOM as HTML'
-            }
-          },
-          required: ['url']
-        }
-      }
-    },
-    {
-      type: 'function',
-      function: {
-        name: 'GoogleSearch',
-        description: 'Search Google for a given query and return a list of search results (titles, URLs, snippets)',
-        parameters: {
-          type: 'object',
-          properties: {
-            query: {
-              type: 'string',
-              description: 'The search query'
-            }
-          },
-          required: ['query']
-        }
-      }
-    },
+
     {
       type: 'function',
       function: {
@@ -1346,27 +1036,7 @@ export function getOpenAITools() {
         }
       }
     },
-    {
-      type: 'function',
-      function: {
-        name: 'SendEmail',
-        description: "Envoie un e-mail avec un sujet et un corps de texte à des destinataires prédéfinis. Cet outil n'est utilisable que s'il a été explicitement autorisé.",
-        parameters: {
-          type: 'object',
-          properties: {
-            subject: {
-              type: 'string',
-              description: "L'objet / le sujet de l'e-mail."
-            },
-            body: {
-              type: 'string',
-              description: "Le corps du message (texte brut)."
-            }
-          },
-          required: ['subject', 'body']
-        }
-      }
-    }
+
   ];
   return [...builtin, ...getPluginTools()];
 }

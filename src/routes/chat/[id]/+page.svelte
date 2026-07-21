@@ -618,6 +618,7 @@
     { name: '/agent', desc: 'Switch to Agent mode (autonomous execution)' },
     { name: '/plan', desc: 'Switch to Plan mode (technical design & planning)' },
     { name: '/ask', desc: 'Switch to Ask mode (questions, Q&A, brainstorming)' },
+    { name: '/pluggins', desc: 'Afficher la liste des plugins installés et chargés' },
   ];
 
   let slashCommands = $derived([...builtinSlashCommands, ...pluginSlashCommands]);
@@ -800,6 +801,30 @@
       const sysMsg = { id: sysMsgId, role: 'system', content: `**Current model:** ${activeModel || 'none'}\n**Current provider:** ${providerName}` };
       messages.push(sysMsg);
       await scrollToBottom();
+      return true;
+    }
+
+    // /pluggins — show loaded plugins list
+    if (cmd === '/pluggins') {
+      if (window.talosAPI && window.talosAPI.getLoadedPluginsList) {
+        try {
+          const list = await window.talosAPI.getLoadedPluginsList();
+          let helpText = '**Plugins installés et chargés :**\n\n';
+          if (list.length === 0) {
+            helpText += '*Aucun plugin n\'est chargé.*';
+          } else {
+            for (const p of list) {
+              helpText += `- **${p.name}** (\`${p.id}\`) ${p.description ? `— ${p.description}` : ''}\n`;
+            }
+          }
+          const sysMsgId = `sys-${Math.random().toString(36).substring(2, 9)}`;
+          const sysMsg = { id: sysMsgId, role: 'system', content: helpText };
+          messages.push(sysMsg);
+          await scrollToBottom();
+        } catch (e) {
+          console.error('Failed to retrieve loaded plugins list:', e);
+        }
+      }
       return true;
     }
 

@@ -8,7 +8,7 @@ import { initDb, getChats, createChat, deleteChat, renameChat, updateChatMode, g
 import { getOpenAITools, getOpenAIToolsForMode, executeTool, getToolParamValue, isCommandSafe, getToolPath, isPathAllowed } from './tools';
 import { getSystemPrompt, getSubAgentPrompt } from './prompts';
 import os from 'os';
-import { loadPlugins, initializePlugins, getPluginConfigSchemas, getPluginSlashCommands, executePluginSlashCommand } from './pluginManager';
+import { loadPlugins, initializePlugins, getPluginConfigSchemas, getPluginSlashCommands, executePluginSlashCommand, getLoadedPlugins } from './pluginManager';
 import { TEMPLATE_VARIABLES, TEMPLATE_SYNTAX_HELP } from './promptVariables';
 import { initScheduler, runTaskNow, triggerSchedulerCheck, computeNextRun } from './scheduler';
 
@@ -255,6 +255,14 @@ ipcMain.handle('plugins:execute-slash-command', async (_, command: string, args:
 
 ipcMain.handle('plugins:get-config-schemas', async () => {
   return getPluginConfigSchemas();
+});
+
+ipcMain.handle('plugins:get-loaded-list', async () => {
+  return getLoadedPlugins().map(p => ({
+    id: p.id,
+    name: p.name,
+    description: p.description || ''
+  }));
 });
 
 // Handler pour récupérer le chemin de la base de données

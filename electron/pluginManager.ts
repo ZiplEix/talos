@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
-import { getSetting } from './db';
+import { getSetting, getSchedules, createChat, addMessage } from './db';
 
 export interface Plugin {
   id: string;
@@ -14,7 +14,7 @@ export interface Plugin {
     default?: any;
     required?: boolean;
   }>;
-  initialize?: (config: Record<string, any>) => Promise<void> | void;
+  initialize?: (config: Record<string, any>, context: any) => Promise<void> | void;
   tools?: any[];
   executeTool?: (name: string, args: any, chatId?: string) => Promise<string | null>;
   slashCommands?: Array<{
@@ -69,6 +69,13 @@ export async function loadPlugins(pluginsDir: string): Promise<void> {
  */
 export async function initializePlugins(): Promise<void> {
   console.log(`[PluginManager] Initializing ${loadedPlugins.length} plugins...`);
+  const context = {
+    getSetting,
+    getSchedules,
+    createChat,
+    addMessage
+  };
+
   for (const plugin of loadedPlugins) {
     if (plugin.initialize) {
       const configValues: Record<string, any> = {};
@@ -90,7 +97,7 @@ export async function initializePlugins(): Promise<void> {
       }
 
       try {
-        await plugin.initialize(configValues);
+        await plugin.initialize(configValues, context);
         console.log(`[PluginManager] Plugin ${plugin.id} successfully initialized.`);
       } catch (err) {
         console.error(`[PluginManager] Failed to run initialize for plugin ${plugin.id}:`, err);
