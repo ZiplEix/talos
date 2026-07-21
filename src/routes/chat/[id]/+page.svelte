@@ -79,9 +79,10 @@
   let subagentsProviderId = $state('ollama');
   let subagentsModel = $state('');
   let showSubagentsPopover = $state(false);
-  let emailChatEnabled = $state(false);
-  let showEmailPopover = $state(false);
-  let emailChatRecipients = $state('');
+  let loadedPluginsList = $state<any[]>([]);
+  let enabledPlugins = $state<Record<string, boolean>>({});
+  let chatPluginSettings = $state<Record<string, Record<string, string>>>({});
+  let showPluginsPopover = $state(false);
 
   function handlePermission(permissionId: string, approved: boolean) {
     if (window.talosAPI) {
@@ -101,20 +102,47 @@
     showSubagentsPopover = !showSubagentsPopover;
   }
 
-  async function toggleEmailChatEnabled() {
-    emailChatEnabled = !emailChatEnabled;
-    if (window.talosAPI) {
-      await window.talosAPI.setSetting(`chat_${chatId}_email_enabled`, String(emailChatEnabled));
+  async function loadPluginsStatus(id: string) {
+    if (window.talosAPI && window.talosAPI.getLoadedPluginsList) {
+      try {
+        const list = await window.talosAPI.getLoadedPluginsList();
+        loadedPluginsList = list;
+        const map: Record<string, boolean> = {};
+        const chatSettings: Record<string, Record<string, string>> = {};
+        for (const p of list) {
+          const val = await window.talosAPI.getSetting(`chat_${id}_plugin_${p.id}_enabled`, 'false');
+          map[p.id] = (val === 'true');
+
+          chatSettings[p.id] = {};
+          if (p.chatConfigFields) {
+            for (const field of p.chatConfigFields) {
+              const fieldVal = await window.talosAPI.getSetting(`chat_${id}_plugin_${p.id}_${field.key}`, String(field.default ?? ''));
+              chatSettings[p.id][field.key] = fieldVal;
+            }
+          }
+        }
+        enabledPlugins = map;
+        chatPluginSettings = chatSettings;
+      } catch (err) {
+        console.error('Failed to load plugins status for chat:', err);
+      }
     }
   }
 
-  function toggleEmailPopover() {
-    showEmailPopover = !showEmailPopover;
+  async function togglePluginEnabled(pluginId: string) {
+    enabledPlugins[pluginId] = !enabledPlugins[pluginId];
+    if (window.talosAPI) {
+      await window.talosAPI.setSetting(`chat_${chatId}_plugin_${pluginId}_enabled`, String(enabledPlugins[pluginId]));
+    }
   }
 
-  async function handleSaveEmailRecipients() {
+  async function handleSaveChatPluginField(pluginId: string, fieldKey: string, value: string) {
+    if (!chatPluginSettings[pluginId]) {
+      chatPluginSettings[pluginId] = {};
+    }
+    chatPluginSettings[pluginId][fieldKey] = value;
     if (window.talosAPI) {
-      await window.talosAPI.setSetting(`chat_${chatId}_email_recipients`, emailChatRecipients.trim());
+      await window.talosAPI.setSetting(`chat_${chatId}_plugin_${pluginId}_${fieldKey}`, value);
     }
   }
 
@@ -271,7 +299,7 @@
   }
 
   function loadSettingsFromLocalStorage() {
-    cwd = localStorage.getItem('talos_cwd') || '.';
+    cwd = '.';
     activeProviderId = localStorage.getItem('talos_active_provider_id') || 'ollama';
     activeModel = localStorage.getItem('talos_active_model_name') || '';
     subagentsGlobalEnabled = true;
@@ -311,36 +339,39 @@
         activeProviderId = chatProviderId;
         activeModel = chatModelName;
 
-        emailChatEnabled = (await window.talosAPI.getSetting(`chat_${id}_email_enabled`, 'false')) === 'true';
-        emailChatRecipients = await window.talosAPI.getSetting(`chat_${id}_email_recipients`, '');
-        showEmailPopover = false;
         showSubagentsPopover = false;
+        showPluginsPopover = false;
 
         let chatCwd = await window.talosAPI.getSetting(`chat_${id}_cwd`, '');
+        if (!chatCwd && window.talosAPI.getHomePath) {
+          chatCwd = await window.talosAPI.getHomePath();
+        }
         if (!chatCwd) {
-          chatCwd = await window.talosAPI.getSetting('talos_cwd', '.');
+          chatCwd = '.';
         }
         cwd = chatCwd;
         if (cwd) {
           await window.talosAPI.setCwd(cwd);
         }
+
+        await loadPluginsStatus(id);
       } catch (e) {
         subagentsChatEnabled = true;
         subagentsProviderId = 'ollama';
         subagentsModel = '';
+        activeProviderId = 'ollama';
+        activeModel = '';
+        enabledPlugins = {};
         showSubagentsPopover = false;
-        emailChatEnabled = false;
-        emailChatRecipients = '';
-        showEmailPopover = false;
+        showPluginsPopover = false;
       }
     } else {
       subagentsChatEnabled = true;
       subagentsProviderId = 'ollama';
       subagentsModel = '';
       showSubagentsPopover = false;
-      emailChatEnabled = false;
-      emailChatRecipients = '';
-      showEmailPopover = false;
+      enabledPlugins = {};
+      showPluginsPopover = false;
     }
 
     // 1. Charger le titre de la discussion
@@ -420,7 +451,7 @@
       const newPath = prompt('Entrez le chemin absolu du dossier de travail :', cwd);
       if (newPath) {
         cwd = newPath;
-        localStorage.setItem('talos_cwd', newPath);
+        localStorage.setItem(`chat_${chatId}_cwd`, newPath);
       }
     }
   }
@@ -1725,57 +1756,73 @@
         <div class="relative flex items-center">
           <button
             type="button"
-            onclick={toggleEmailPopover}
-            class="transition-colors cursor-pointer flex items-center justify-center gap-1.5 text-[11px] font-medium
-              {emailChatEnabled
-                ? 'text-amber-500 hover:text-amber-400'
+            onclick={() => showPluginsPopover = !showPluginsPopover}
+            class="transition-colors cursor-pointer flex items-center justify-center gap-1 text-[11px] font-medium
+              {Object.values(enabledPlugins).some(v => v === true)
+                ? 'text-indigo-400 hover:text-indigo-300'
                 : 'text-slate-500 hover:text-slate-400'
               }"
-            title="Configuration de l'outil E-mail pour cette discussion"
+            title="Activer ou désactiver des plugins pour cette discussion"
           >
-            <span>✉️</span>
-            <span class="font-mono text-[10px]">{emailChatEnabled ? 'On' : 'Off'}</span>
+            <span>🔌</span>
+            <span class="font-mono text-[10px]">{Object.values(enabledPlugins).filter(v => v === true).length} active(s)</span>
           </button>
 
-          {#if showEmailPopover}
+          {#if showPluginsPopover}
             <!-- Popover overlay to close when clicking outside -->
             <div
               class="fixed inset-0 z-40 cursor-default"
-              onclick={() => showEmailPopover = false}
+              onclick={() => showPluginsPopover = false}
               role="presentation"
             ></div>
 
             <!-- Popover box -->
             <div class="absolute bottom-full left-0 mb-2 z-50 bg-[#0f1422] border border-slate-800 rounded-xl p-4 shadow-xl w-72 space-y-3">
-              <h4 class="text-xs font-bold text-slate-350 uppercase tracking-wider">Outil E-mail (SendEmail)</h4>
+              <h4 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Plugins de la discussion</h4>
 
-              <div class="flex items-center justify-between">
-                <span class="text-xs text-slate-450 text-slate-400">Activer l'envoi de mail</span>
-                <button
-                  type="button"
-                  onclick={toggleEmailChatEnabled}
-                  title="Activer/Désactiver l'outil e-mail pour cette discussion"
-                  aria-label="Toggle email tool for this chat"
-                  class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none
-                    {emailChatEnabled ? 'bg-amber-500' : 'bg-slate-700'}"
-                >
-                  <span
-                    class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out
-                      {emailChatEnabled ? 'translate-x-4' : 'translate-x-0'}"
-                  ></span>
-                </button>
-              </div>
+              {#if loadedPluginsList.length === 0}
+                <p class="text-xs text-slate-500 italic">Aucun plugin chargé dans Talos.</p>
+              {:else}
+                <div class="space-y-2 max-h-60 overflow-y-auto pr-1">
+                  {#each loadedPluginsList as plugin}
+                    <div class="bg-slate-950/20 border border-slate-900/50 p-2 rounded-lg space-y-2">
+                      <div class="flex items-center justify-between gap-2">
+                        <div class="space-y-0.5 truncate flex-1">
+                          <span class="text-xs font-semibold text-slate-350 block truncate" title={plugin.name}>{plugin.name}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onclick={() => togglePluginEnabled(plugin.id)}
+                          title={`Activer/Désactiver ${plugin.name} pour cette discussion`}
+                          aria-label={`Toggle ${plugin.name}`}
+                          class="relative inline-flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none
+                            {enabledPlugins[plugin.id] ? 'bg-indigo-600' : 'bg-slate-700'}"
+                        >
+                          <span
+                            class="pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out
+                              {enabledPlugins[plugin.id] ? 'translate-x-3.5' : 'translate-x-0'}"
+                          ></span>
+                        </button>
+                      </div>
 
-              {#if emailChatEnabled}
-                <div class="space-y-1.5 border-t border-slate-800/40 pt-2">
-                  <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Destinataire(s)</label>
-                  <input
-                    type="text"
-                    bind:value={emailChatRecipients}
-                    onchange={handleSaveEmailRecipients}
-                    placeholder="exemple@mail.com"
-                    class="w-full bg-slate-950/60 border border-slate-800/80 focus:border-indigo-500/40 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-650 outline-none transition-all font-mono"
-                  />
+                      {#if enabledPlugins[plugin.id] && plugin.chatConfigFields && plugin.chatConfigFields.length > 0}
+                        <div class="pl-2 border-l border-indigo-500/30 space-y-1.5 pt-1">
+                          {#each plugin.chatConfigFields as field}
+                            <div class="space-y-1">
+                              <label class="text-[9px] font-bold text-slate-450 uppercase tracking-wider block">{field.label}</label>
+                              <input
+                                type="text"
+                                value={chatPluginSettings[plugin.id]?.[field.key] || ''}
+                                oninput={(e) => handleSaveChatPluginField(plugin.id, field.key, e.currentTarget.value)}
+                                placeholder={field.placeholder || (field.required ? 'Obligatoire' : 'Optionnel')}
+                                class="w-full bg-slate-950/60 border border-slate-800/80 focus:border-indigo-500/40 rounded-lg px-2 py-1 text-[11px] text-slate-200 placeholder-slate-600 outline-none transition-all font-mono"
+                              />
+                            </div>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
                 </div>
               {/if}
             </div>

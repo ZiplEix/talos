@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld("talosAPI", {
   getCwd: () => ipcRenderer.invoke('cwd:get'),
   selectCwd: (chatId?: string) => ipcRenderer.invoke('cwd:select', chatId),
   setCwd: (path: string) => ipcRenderer.invoke('cwd:set', path),
+  getHomePath: () => ipcRenderer.invoke('app:home-path'),
 
   chat: (providerId: string, model: string, chatMessages: any[]) => ipcRenderer.invoke('openai:chat', providerId, model, chatMessages),
 
@@ -78,6 +79,7 @@ contextBridge.exposeInMainWorld("talosAPI", {
   executePluginSlashCommand: (command: string, args: string[]) => ipcRenderer.invoke('plugins:execute-slash-command', command, args),
   getPluginsConfigSchemas: () => ipcRenderer.invoke('plugins:get-config-schemas'),
   getLoadedPluginsList: () => ipcRenderer.invoke('plugins:get-loaded-list'),
+  installPlugin: (source: { type: 'local_folder' | 'local_zip' | 'git'; gitUrl?: string }) => ipcRenderer.invoke('plugins:install', source),
 
   onSecurityRequestPermission: (callback: (data: { permissionId: string; chatId: string; type: 'bash' | 'file_access'; toolName: string; command?: string; path?: string; actionDescription: string; agentName?: string }) => void) => {
     const subscription = (_event: any, data: any) => callback(data);
