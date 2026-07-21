@@ -184,6 +184,15 @@
     loadInitialSettings();
     loadModelSuggestions();
 
+    if (window.talosAPI && window.talosAPI.getPluginSlashCommands) {
+      window.talosAPI.getPluginSlashCommands().then(cmds => {
+        pluginSlashCommands = cmds.map((c: any) => ({
+          name: c.command,
+          desc: c.description
+        }));
+      }).catch(err => console.error('Failed to load plugin slash commands:', err));
+    }
+
     const handleRenameEvent = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (detail.id === chatId) {
@@ -599,7 +608,9 @@
 
   // ── Slash Commands & Autocomplete ─────────────────────────────
 
-  const slashCommands = [
+  let pluginSlashCommands = $state<Array<{ name: string; desc: string }>>([]);
+
+  const builtinSlashCommands = [
     { name: '/help', desc: 'Show available commands' },
     { name: '/model', desc: 'Show current model / provider, or switch model with /model <provider/model>' },
     { name: '/clear', desc: 'Start a new conversation' },
@@ -608,6 +619,8 @@
     { name: '/plan', desc: 'Switch to Plan mode (technical design & planning)' },
     { name: '/ask', desc: 'Switch to Ask mode (questions, Q&A, brainstorming)' },
   ];
+
+  let slashCommands = $derived([...builtinSlashCommands, ...pluginSlashCommands]);
 
   let showSuggestions = $state(false);
   let selectedSuggestionIndex = $state(0);
@@ -738,6 +751,22 @@
   async function handleSlashCommand(text: string): Promise<boolean> {
     const parts = text.split(/\s+/);
     const cmd = parts[0].toLowerCase();
+
+    // 1. Tenter d'exécuter via un plugin
+    if (window.talosAPI && window.talosAPI.executePluginSlashCommand) {
+      try {
+        const pluginResult = await window.talosAPI.executePluginSlashCommand(cmd, parts.slice(1));
+        if (pluginResult !== null) {
+          const sysMsgId = `sys-${Math.random().toString(36).substring(2, 9)}`;
+          const sysMsg = { id: sysMsgId, role: 'system', content: pluginResult };
+          messages.push(sysMsg);
+          await scrollToBottom();
+          return true;
+        }
+      } catch (err) {
+        console.error(`Failed to execute plugin slash command ${cmd}:`, err);
+      }
+    }
 
     // /model <name> — change model (no provider change, keep current provider)
     if (cmd === '/model' && parts.length >= 2) {

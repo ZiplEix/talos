@@ -7,6 +7,7 @@ import { BrowserWindow, app } from 'electron';
 import { getDbPath, getSetting } from './db';
 import nodemailer from 'nodemailer';
 import { marked } from 'marked';
+import { getPluginTools, executePluginTool } from './pluginManager';
 
 export function isRestrictedPath(filePath: string): boolean {
   try {
@@ -951,6 +952,11 @@ export function getToolParamValue(name: string, args: any): string {
 
 // Dispatch tool execution by name
 export async function executeTool(name: string, args: any, chatId?: string): Promise<string> {
+  const pluginResult = await executePluginTool(name, args, chatId);
+  if (pluginResult !== null) {
+    return pluginResult;
+  }
+
   switch (name) {
     case 'Read':
       return handleReadTool(args);
@@ -993,7 +999,7 @@ export async function executeTool(name: string, args: any, chatId?: string): Pro
 
 // Return OpenAI JSON schema definitions for the tools
 export function getOpenAITools() {
-  return [
+  const builtin = [
     {
       type: 'function',
       function: {
@@ -1362,6 +1368,7 @@ export function getOpenAITools() {
       }
     }
   ];
+  return [...builtin, ...getPluginTools()];
 }
 
 export function getOpenAIToolsForMode(mode: string): any[] {

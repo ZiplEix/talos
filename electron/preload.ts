@@ -74,6 +74,9 @@ contextBridge.exposeInMainWorld("talosAPI", {
   resetPrompt: (name: string) => ipcRenderer.invoke('prompts:reset', name),
   getTemplateVariables: () => ipcRenderer.invoke('prompts:template-variables'),
   saveMedia: (chatId: string, filename: string, base64Data: string) => ipcRenderer.invoke('chat:save-media', chatId, filename, base64Data),
+  getPluginSlashCommands: () => ipcRenderer.invoke('plugins:get-slash-commands'),
+  executePluginSlashCommand: (command: string, args: string[]) => ipcRenderer.invoke('plugins:execute-slash-command', command, args),
+  getPluginsConfigSchemas: () => ipcRenderer.invoke('plugins:get-config-schemas'),
 
   onSecurityRequestPermission: (callback: (data: { permissionId: string; chatId: string; type: 'bash' | 'file_access'; toolName: string; command?: string; path?: string; actionDescription: string; agentName?: string }) => void) => {
     const subscription = (_event: any, data: any) => callback(data);

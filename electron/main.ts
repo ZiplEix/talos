@@ -7,6 +7,8 @@ import { existsSync, readFileSync } from 'fs';
 import { initDb, getChats, createChat, deleteChat, renameChat, updateChatMode, getChatMode, getProviders, saveProvider, deleteProvider, getModels, addModel, deleteModel, getMessages, addMessage, saveMessages, getSetting, setSetting, getDbPath, getSchedules, saveSchedule, deleteSchedule, updateScheduleStatus } from './db';
 import { getOpenAITools, getOpenAIToolsForMode, executeTool, getToolParamValue, isCommandSafe, getToolPath, isPathAllowed } from './tools';
 import { getSystemPrompt, getSubAgentPrompt } from './prompts';
+import os from 'os';
+import { loadPlugins, initializePlugins, getPluginConfigSchemas, getPluginSlashCommands, executePluginSlashCommand } from './pluginManager';
 import { TEMPLATE_VARIABLES, TEMPLATE_SYNTAX_HELP } from './promptVariables';
 import { initScheduler, runTaskNow, triggerSchedulerCheck, computeNextRun } from './scheduler';
 
@@ -234,7 +236,25 @@ ipcMain.handle('settings:get', async (_, key: string, defaultValue: string) => {
 });
 
 ipcMain.handle('settings:set', async (_, key: string, value: string) => {
-  return await setSetting(key, value);
+  const result = await setSetting(key, value);
+  if (key.startsWith('plugin_')) {
+    initializePlugins().catch(err => {
+      console.error('[Settings] Failed to re-initialize plugins after setting change:', err);
+    });
+  }
+  return result;
+});
+
+ipcMain.handle('plugins:get-slash-commands', async () => {
+  return getPluginSlashCommands();
+});
+
+ipcMain.handle('plugins:execute-slash-command', async (_, command: string, args: string[]) => {
+  return await executePluginSlashCommand(command, args);
+});
+
+ipcMain.handle('plugins:get-config-schemas', async () => {
+  return getPluginConfigSchemas();
 });
 
 // Handler pour récupérer le chemin de la base de données
@@ -1129,6 +1149,16 @@ app.whenReady().then(async () => {
 
   try {
     await initDb();
+
+    // Load and initialize plugins from ~/.talos/pluggins
+    try {
+      const pluginsDir = path.join(os.homedir(), '.talos', 'pluggins');
+      await loadPlugins(pluginsDir);
+      await initializePlugins();
+    } catch (e) {
+      console.error('Failed to load/initialize plugins on startup:', e);
+    }
+
     let savedCwd = await getSetting('talos_cwd', '');
     if (!savedCwd) {
       try {

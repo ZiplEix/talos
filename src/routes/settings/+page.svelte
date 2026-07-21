@@ -4,7 +4,7 @@
   import ModelSelector from '$lib/components/ModelSelector.svelte';
   import { onMount } from 'svelte';
 
-  let activeTab = $state<'general' | 'providers' | 'prompts' | 'smtp'>('general');
+  let activeTab = $state<'general' | 'providers' | 'prompts' | 'smtp' | 'plugins'>('general');
   let subagentsEnabled = $state(true);
 
   let smtpHost = $state('');
@@ -18,6 +18,46 @@
   let defaultModel = $state('');
   let defaultSubagentsProviderId = $state('ollama');
   let defaultSubagentsModel = $state('');
+
+  let pluginSchemas = $state<any[]>([]);
+  let pluginSettings = $state<Record<string, Record<string, string>>>({});
+
+  async function loadPluginsConfig() {
+    if (window.talosAPI && window.talosAPI.getPluginsConfigSchemas) {
+      try {
+        pluginSchemas = await window.talosAPI.getPluginsConfigSchemas();
+        const settingsMap: Record<string, Record<string, string>> = {};
+        for (const plugin of pluginSchemas) {
+          settingsMap[plugin.id] = {};
+          for (const field of plugin.configFields) {
+            const dbKey = `plugin_${plugin.id}_${field.key}`;
+            const val = await window.talosAPI.getSetting(dbKey, String(field.default ?? ''));
+            settingsMap[plugin.id][field.key] = val;
+          }
+        }
+        pluginSettings = settingsMap;
+      } catch (err) {
+        console.error('Failed to load plugins config:', err);
+      }
+    }
+  }
+
+  async function handleSavePluginField(pluginId: string, fieldKey: string, value: string) {
+    if (!pluginSettings[pluginId]) {
+      pluginSettings[pluginId] = {};
+    }
+    pluginSettings[pluginId][fieldKey] = value;
+    if (window.talosAPI) {
+      const dbKey = `plugin_${pluginId}_${fieldKey}`;
+      await window.talosAPI.setSetting(dbKey, value);
+    }
+  }
+
+  async function handleTogglePluginField(pluginId: string, fieldKey: string) {
+    const current = pluginSettings[pluginId]?.[fieldKey] || 'false';
+    const nextVal = current === 'true' ? 'false' : 'true';
+    await handleSavePluginField(pluginId, fieldKey, nextVal);
+  }
 
   onMount(async () => {
     if (window.talosAPI) {
@@ -33,6 +73,7 @@
         smtpPass = await window.talosAPI.getSetting('smtp_pass', '');
         smtpFrom = await window.talosAPI.getSetting('smtp_from', 'talos@app.com');
         smtpSecure = (await window.talosAPI.getSetting('smtp_secure', 'false')) === 'true';
+        await loadPluginsConfig();
       } catch (err) {
         console.error(err);
       }
@@ -119,6 +160,12 @@
       class="pb-3 text-sm font-semibold transition-all duration-200 cursor-pointer relative {activeTab === 'smtp' ? 'text-indigo-400 border-b-2 border-indigo-500 font-bold' : 'text-slate-400 hover:text-slate-200 border-b-2 border-transparent'}"
     >
       SMTP
+    </button>
+    <button
+      onclick={() => activeTab = 'plugins'}
+      class="pb-3 text-sm font-semibold transition-all duration-200 cursor-pointer relative {activeTab === 'plugins' ? 'text-indigo-400 border-b-2 border-indigo-500 font-bold' : 'text-slate-400 hover:text-slate-200 border-b-2 border-transparent'}"
+    >
+      Plugins
     </button>
   </nav>
 
@@ -300,6 +347,64 @@
             </div>
           </div>
         </div>
+      </div>
+    {/if}
+
+    <!-- PLUGINS TAB -->
+    {#if activeTab === 'plugins'}
+      <div class="space-y-6">
+        {#if pluginSchemas.length === 0}
+          <div class="bg-[#0b0f19] border border-slate-800/60 rounded-2xl p-6 text-slate-400 text-sm italic text-center">
+            Aucun plugin nécessitant une configuration n'est actuellement chargé dans <code class="bg-slate-950 px-1.5 py-0.5 rounded font-mono text-indigo-400 text-xs">~/.talos/pluggins</code>.
+          </div>
+        {:else}
+          {#each pluginSchemas as plugin}
+            <div class="bg-[#0b0f19] border border-slate-800/60 rounded-2xl p-6 space-y-6">
+              <div class="space-y-1">
+                <h2 class="text-sm font-bold text-slate-200 uppercase tracking-wider">{plugin.name}</h2>
+                {#if plugin.description}
+                  <p class="text-xs text-slate-400">{plugin.description}</p>
+                {/if}
+              </div>
+              
+              <div class="grid grid-cols-2 gap-4 pt-4 border-t border-slate-900/60">
+                {#each plugin.configFields as field}
+                  {#if field.type === 'boolean'}
+                    <div class="flex items-center justify-between bg-slate-950/20 border border-slate-900/50 p-4 rounded-xl">
+                      <div class="space-y-0.5">
+                        <span class="text-xs font-bold text-slate-400 uppercase tracking-wider block">{field.label}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onclick={() => handleTogglePluginField(plugin.id, field.key)}
+                        title={`Activer/Désactiver ${field.label}`}
+                        aria-label={`Toggle ${field.label}`}
+                        class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none
+                          {pluginSettings[plugin.id]?.[field.key] === 'true' ? 'bg-indigo-600' : 'bg-slate-700'}"
+                      >
+                        <span
+                          class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out
+                            {pluginSettings[plugin.id]?.[field.key] === 'true' ? 'translate-x-4' : 'translate-x-0'}"
+                        ></span>
+                      </button>
+                    </div>
+                  {:else}
+                    <div class="space-y-1.5">
+                      <label class="text-xs font-bold text-slate-400 uppercase tracking-wider block">{field.label}</label>
+                      <input
+                        type={field.type === 'password' ? 'password' : 'text'}
+                        value={pluginSettings[plugin.id]?.[field.key] || ''}
+                        onchange={(e) => handleSavePluginField(plugin.id, field.key, (e.target as HTMLInputElement).value)}
+                        placeholder={field.required ? 'Obligatoire' : 'Optionnel'}
+                        class="w-full bg-slate-950/60 border border-slate-800/80 focus:border-indigo-500/40 rounded-xl px-4 py-2.5 text-sm text-slate-200 outline-none transition-all"
+                      />
+                    </div>
+                  {/if}
+                {/each}
+              </div>
+            </div>
+          {/each}
+        {/if}
       </div>
     {/if}
 
