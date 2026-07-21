@@ -170,7 +170,8 @@ export async function executePluginSlashCommand(
     const match = plugin.slashCommands?.find(c => c.command.toLowerCase() === command.toLowerCase());
     if (match) {
       try {
-        return await match.execute(args);
+        // Bind the execute function context (this) to the plugin instance
+        return await match.execute.call(plugin, args);
       } catch (err: any) {
         console.error(`[PluginManager] Error executing command ${command} on plugin ${plugin.id}:`, err);
         return `Error: command execution failed: ${err.message}`;
